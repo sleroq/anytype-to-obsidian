@@ -20,6 +20,7 @@ type Exporter struct {
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
 	IncludeArchivedProperties bool
+	ExcludeEmptyProperties    bool
 	ExcludePropertyKeys       []string
 	ForceIncludePropertyKeys  []string
 }
@@ -149,6 +150,7 @@ var defaultHiddenPropertyKeys = map[string]struct{}{
 type propertyFilters struct {
 	exclude      map[string]struct{}
 	forceInclude map[string]struct{}
+	excludeEmpty bool
 }
 
 func (e Exporter) Run() (Stats, error) {
@@ -235,7 +237,7 @@ func (e Exporter) Run() (Stats, error) {
 		objectNamesByID[id] = name
 	}
 
-	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys)
+	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys, e.ExcludeEmptyProperties)
 
 	for _, obj := range objects {
 		noteRelPath := notePathByID[obj.ID]
@@ -477,6 +479,9 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 		}
 		v := obj.Details[k]
 		converted := convertPropertyValue(k, v, relations, optionsByID, notes, objectNamesByID, fileObjects)
+		if filters.excludeEmpty && isEmptyFrontmatterValue(converted) {
+			continue
+		}
 		outKey := frontmatterKey(k, rel, hasRel)
 		if _, exists := usedKeys[outKey]; exists {
 			outKey = k
@@ -489,10 +494,11 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 	return buf.String()
 }
 
-func newPropertyFilters(exclude []string, forceInclude []string) propertyFilters {
+func newPropertyFilters(exclude []string, forceInclude []string, excludeEmpty bool) propertyFilters {
 	return propertyFilters{
 		exclude:      normalizePropertyKeySet(exclude),
 		forceInclude: normalizePropertyKeySet(forceInclude),
+		excludeEmpty: excludeEmpty,
 	}
 }
 
@@ -932,6 +938,23 @@ func writeYAMLKeyValue(buf *bytes.Buffer, key string, value any) {
 	buf.WriteString(":")
 	writeYAMLValue(buf, value, 0)
 	buf.WriteString("\n")
+}
+
+func isEmptyFrontmatterValue(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(v) == ""
+	case []string:
+		return len(v) == 0
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		return len(v) == 0
+	default:
+		return false
+	}
 }
 
 func writeYAMLValue(buf *bytes.Buffer, value any, indent int) {

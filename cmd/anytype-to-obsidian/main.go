@@ -15,6 +15,7 @@ func main() {
 	var filenameEscaping string
 	var includeDynamicProperties bool
 	var includeArchivedProperties bool
+	var excludeEmptyProperties bool
 	var excludeProperties string
 	var includeProperties string
 
@@ -23,6 +24,7 @@ func main() {
 	flag.StringVar(&filenameEscaping, "filename-escaping", "auto", "Filename escaping mode: auto, posix, windows")
 	flag.BoolVar(&includeDynamicProperties, "include-dynamic-properties", false, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
 	flag.BoolVar(&includeArchivedProperties, "include-archived-properties", false, "Include archived/unresolved Anytype relation properties that have no readable relation name")
+	flag.BoolVar(&excludeEmptyProperties, "exclude-empty-properties", false, "Exclude frontmatter properties with empty values (nil, empty strings, empty arrays, empty objects)")
 	flag.StringVar(&excludeProperties, "exclude-properties", "", "Comma-separated property keys/names to always exclude from frontmatter")
 	flag.StringVar(&includeProperties, "force-include-properties", "", "Comma-separated property keys/names to always include in frontmatter")
 	flag.Parse()
@@ -33,6 +35,7 @@ func main() {
 		FilenameEscaping:          filenameEscaping,
 		IncludeDynamicProperties:  includeDynamicProperties,
 		IncludeArchivedProperties: includeArchivedProperties,
+		ExcludeEmptyProperties:    excludeEmptyProperties,
 		ExcludePropertyKeys:       parseCommaSeparatedList(excludeProperties),
 		ForceIncludePropertyKeys:  parseCommaSeparatedList(includeProperties),
 	}

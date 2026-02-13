@@ -313,6 +313,81 @@ func TestExporterSupportsPropertyIncludeExcludeOverrides(t *testing.T) {
 	}
 }
 
+func TestExporterExcludesEmptyPropertiesWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	outputWithEmpty := filepath.Join(root, "vault-with-empty")
+	outputWithoutEmpty := filepath.Join(root, "vault-without-empty")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":          "obj-1",
+		"name":        "Task One",
+		"emptyString": "",
+		"spaceOnly":   "   ",
+		"emptyList":   []any{},
+		"emptyMap":    map[string]any{},
+		"nullField":   nil,
+		"nonEmpty":    "value",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: outputWithEmpty}).Run()
+	if err != nil {
+		t.Fatalf("run exporter (default): %v", err)
+	}
+
+	noteWithEmptyBytes, err := os.ReadFile(filepath.Join(outputWithEmpty, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note (default): %v", err)
+	}
+	noteWithEmpty := string(noteWithEmptyBytes)
+	for _, expected := range []string{
+		"emptyString: \"\"",
+		"spaceOnly: \"   \"",
+		"emptyList: []",
+		"emptyMap: \"{}\"",
+		"nullField: null",
+		"nonEmpty: \"value\"",
+	} {
+		if !strings.Contains(noteWithEmpty, expected) {
+			t.Fatalf("expected %q in default export, got:\n%s", expected, noteWithEmpty)
+		}
+	}
+
+	_, err = (Exporter{InputDir: input, OutputDir: outputWithoutEmpty, ExcludeEmptyProperties: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter (exclude-empty): %v", err)
+	}
+
+	noteWithoutEmptyBytes, err := os.ReadFile(filepath.Join(outputWithoutEmpty, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note (exclude-empty): %v", err)
+	}
+	noteWithoutEmpty := string(noteWithoutEmptyBytes)
+	for _, unexpected := range []string{
+		"emptyString:",
+		"spaceOnly:",
+		"emptyList:",
+		"emptyMap:",
+		"nullField:",
+	} {
+		if strings.Contains(noteWithoutEmpty, unexpected) {
+			t.Fatalf("did not expect %q when exclude-empty is enabled, got:\n%s", unexpected, noteWithoutEmpty)
+		}
+	}
+	if !strings.Contains(noteWithoutEmpty, "nonEmpty: \"value\"") {
+		t.Fatalf("expected non-empty property to remain, got:\n%s", noteWithoutEmpty)
+	}
+}
+
 func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")

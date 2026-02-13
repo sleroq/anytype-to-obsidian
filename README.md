@@ -28,6 +28,7 @@ Flags:
 - `-output`: target Obsidian vault path.
 - `-include-dynamic-properties`: include dynamic/system-managed Anytype properties in note frontmatter.
 - `-include-archived-properties`: include archived/unresolved relation properties that do not have readable relation names in the export.
+- `-exclude-empty-properties`: exclude frontmatter properties with empty values (`null`, empty string, empty array, empty object).
 - `-exclude-properties`: comma-separated list of property keys/names to always exclude from frontmatter.
 - `-force-include-properties`: comma-separated list of property keys/names to always include in frontmatter.
 
@@ -46,8 +47,9 @@ To override these rules for specific properties:
 
 - Use `-force-include-properties "anytype_id,lastModifiedDate"` to include specific properties without enabling all dynamic ones.
 - Use `-exclude-properties "customField,backlinks"` to explicitly exclude properties even when they would normally be included.
+- Use `-exclude-empty-properties` to skip properties that resolve to empty values in frontmatter.
 
-Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules.
+Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules; then `-exclude-empty-properties` removes remaining empty values.
 
 ## Output Structure
 
