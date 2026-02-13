@@ -122,7 +122,14 @@ var dynamicPropertyKeys = map[string]struct{}{
 }
 
 var defaultHiddenPropertyKeys = map[string]struct{}{
-	"author":            {},
+	"creator":           {},
+	"coverX":            {},
+	"coverY":            {},
+	"coverType":         {},
+	"coverScale":        {},
+	"coverId":           {},
+	"oldAnytypeID":      {},
+	"origin":            {},
 	"createdDate":       {},
 	"featuredRelations": {},
 	"id":                {},
@@ -131,7 +138,9 @@ var defaultHiddenPropertyKeys = map[string]struct{}{
 	"layout":            {},
 	"layoutAlign":       {},
 	"resolvedLayout":    {},
-	"snippets":          {},
+	"snippet":           {},
+	"name":              {},
+	"restrictions":      {},
 	"sourceObject":      {},
 	"spaceId":           {},
 	"anytype_id":        {},
