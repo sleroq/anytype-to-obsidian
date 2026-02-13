@@ -10,6 +10,7 @@ Anytype markdown export is lossy for important cases (multi-selects, object rela
 
 - Preserve object-to-object relations.
 - Preserve all fields, including multi-select/tag/status and object relations.
+- Apply type-aware frontmatter ordering: type-visible properties first, then type-hidden properties, then remaining properties.
 - Convert content blocks to Obsidian-friendly markdown.
 - Convert tables to markdown tables when possible.
 - Convert files/bookmarks and keep file assets in the vault.

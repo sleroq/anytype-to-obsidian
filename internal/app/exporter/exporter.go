@@ -90,6 +90,15 @@ type relationDef struct {
 	Format int
 }
 
+type typeDef struct {
+	ID              string
+	Name            string
+	Featured        []string
+	Recommended     []string
+	RecommendedFile []string
+	Hidden          []string
+}
+
 type objectInfo struct {
 	ID      string
 	Name    string
@@ -183,7 +192,7 @@ func (e Exporter) Run() (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	typeNamesByID, err := readNamesByID(filepath.Join(e.InputDir, "types"))
+	typesByID, err := readTypes(filepath.Join(e.InputDir, "types"))
 	if err != nil {
 		return Stats{}, err
 	}
@@ -220,15 +229,16 @@ func (e Exporter) Run() (Stats, error) {
 	}
 
 	idToObject := make(map[string]objectInfo, len(objects))
-	objectNamesByID := make(map[string]string, len(objects)+len(typeNamesByID))
+	objectNamesByID := make(map[string]string, len(objects)+len(typesByID))
 	for _, o := range objects {
 		idToObject[o.ID] = o
 		if name := strings.TrimSpace(o.Name); name != "" {
 			objectNamesByID[o.ID] = name
 		}
 	}
-	for id, name := range typeNamesByID {
-		if strings.TrimSpace(name) == "" {
+	for id, typeInfo := range typesByID {
+		name := strings.TrimSpace(typeInfo.Name)
+		if name == "" {
 			continue
 		}
 		if _, exists := objectNamesByID[id]; exists {
@@ -249,6 +259,7 @@ func (e Exporter) Run() (Stats, error) {
 		fm := renderFrontmatter(
 			obj,
 			relations,
+			typesByID,
 			optionsByID,
 			notePathByID,
 			objectNamesByID,
@@ -410,15 +421,15 @@ func readFileObjects(dir string) (map[string]string, error) {
 	return out, nil
 }
 
-func readNamesByID(dir string) (map[string]string, error) {
+func readTypes(dir string) (map[string]typeDef, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return map[string]string{}, nil
+			return map[string]typeDef{}, nil
 		}
 		return nil, fmt.Errorf("read dir %s: %w", dir, err)
 	}
-	out := make(map[string]string)
+	out := make(map[string]typeDef)
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
 			continue
@@ -431,11 +442,14 @@ func readNamesByID(dir string) (map[string]string, error) {
 		if id == "" {
 			continue
 		}
-		name := strings.TrimSpace(asString(f.Snapshot.Data.Details["name"]))
-		if name == "" {
-			continue
+		out[id] = typeDef{
+			ID:              id,
+			Name:            strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
+			Featured:        anyToStringSlice(f.Snapshot.Data.Details["recommendedFeaturedRelations"]),
+			Recommended:     anyToStringSlice(f.Snapshot.Data.Details["recommendedRelations"]),
+			RecommendedFile: anyToStringSlice(f.Snapshot.Data.Details["recommendedFileRelations"]),
+			Hidden:          anyToStringSlice(f.Snapshot.Data.Details["recommendedHiddenRelations"]),
 		}
-		out[id] = name
 	}
 	return out, nil
 }
@@ -452,16 +466,12 @@ func readSnapshot(path string) (snapshotFile, error) {
 	return s, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
-	keys := make([]string, 0, len(obj.Details))
-	for k := range obj.Details {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
+	keys, includeByType := orderedFrontmatterKeys(obj, relations, typesByID)
 
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
-	includeAnytypeID := shouldIncludeFrontmatterProperty("anytype_id", relationDef{}, false, includeDynamicProperties, includeArchivedProperties, filters)
+	includeAnytypeID := shouldIncludeFrontmatterProperty("anytype_id", relationDef{}, false, false, includeDynamicProperties, includeArchivedProperties, filters)
 	if includeAnytypeID {
 		buf.WriteString("anytype_id: ")
 		writeYAMLString(&buf, obj.ID)
@@ -474,7 +484,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 	}
 	for _, k := range keys {
 		rel, hasRel := relations[k]
-		if !shouldIncludeFrontmatterProperty(k, rel, hasRel, includeDynamicProperties, includeArchivedProperties, filters) {
+		if !shouldIncludeFrontmatterProperty(k, rel, hasRel, includeByType[k], includeDynamicProperties, includeArchivedProperties, filters) {
 			continue
 		}
 		v := obj.Details[k]
@@ -492,6 +502,86 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 
 	buf.WriteString("---\n\n")
 	return buf.String()
+}
+
+func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef) ([]string, map[string]bool) {
+	keys := make([]string, 0, len(obj.Details))
+	for k := range obj.Details {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	ordered := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	includeByType := map[string]bool{}
+
+	appendUnique := func(k string, fromType bool) {
+		if k == "" {
+			return
+		}
+		if _, ok := obj.Details[k]; !ok {
+			return
+		}
+		if _, ok := seen[k]; ok {
+			if fromType {
+				includeByType[k] = true
+			}
+			return
+		}
+		seen[k] = struct{}{}
+		ordered = append(ordered, k)
+		if fromType {
+			includeByType[k] = true
+		}
+	}
+
+	typeID := asString(obj.Details["type"])
+	if typeID != "" {
+		if typeInfo, ok := typesByID[typeID]; ok {
+			visibleRefs := make([]string, 0, len(typeInfo.Featured)+len(typeInfo.Recommended)+len(typeInfo.RecommendedFile))
+			visibleRefs = append(visibleRefs, typeInfo.Featured...)
+			visibleRefs = append(visibleRefs, typeInfo.Recommended...)
+			visibleRefs = append(visibleRefs, typeInfo.RecommendedFile...)
+			for _, ref := range visibleRefs {
+				appendUnique(resolveTypeRelationRefToDetailKey(ref, obj.Details, relations), true)
+			}
+			for _, ref := range typeInfo.Hidden {
+				appendUnique(resolveTypeRelationRefToDetailKey(ref, obj.Details, relations), true)
+			}
+		}
+	}
+
+	for _, k := range keys {
+		appendUnique(k, false)
+	}
+
+	return ordered, includeByType
+}
+
+func resolveTypeRelationRefToDetailKey(ref string, details map[string]any, relations map[string]relationDef) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	if _, ok := details[ref]; ok {
+		return ref
+	}
+
+	rel, hasRel := relations[ref]
+	if !hasRel {
+		return ""
+	}
+	if rel.Key != "" {
+		if _, ok := details[rel.Key]; ok {
+			return rel.Key
+		}
+	}
+	if rel.ID != "" {
+		if _, ok := details[rel.ID]; ok {
+			return rel.ID
+		}
+	}
+	return ""
 }
 
 func newPropertyFilters(exclude []string, forceInclude []string, excludeEmpty bool) propertyFilters {
@@ -552,12 +642,15 @@ func (f propertyFilters) hasExclude(rawKey string, rel relationDef, hasRel bool)
 	return false
 }
 
-func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel bool, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) bool {
+func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel bool, includeByType bool, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) bool {
 	if filters.hasForceInclude(rawKey, rel, hasRel) {
 		return true
 	}
 	if filters.hasExclude(rawKey, rel, hasRel) {
 		return false
+	}
+	if includeByType {
+		return true
 	}
 	if _, hidden := defaultHiddenPropertyKeys[rawKey]; hidden {
 		return false

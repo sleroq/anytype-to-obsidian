@@ -604,6 +604,79 @@ func TestExporterResolvesTypeRelationFromTypesDirectory(t *testing.T) {
 	}
 }
 
+func TestExporterOrdersTypePropertiesAndIncludesTypeHidden(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+	mustMkdirAll(t, filepath.Join(input, "types"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-contact.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-contact",
+		"relationKey":    "contact",
+		"relationFormat": 1,
+		"name":           "Contact",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-last-modified-date.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-last-modified-date",
+		"relationKey":    "lastModifiedDate",
+		"relationFormat": 4,
+		"name":           "Last Modified Date",
+	}, nil)
+
+	typeID := "type-human"
+	writePBJSON(t, filepath.Join(input, "types", typeID+".pb.json"), "STType", map[string]any{
+		"id":                           typeID,
+		"name":                         "Human",
+		"recommendedRelations":         []string{"rel-contact"},
+		"recommendedHiddenRelations":   []string{"rel-last-modified-date"},
+		"recommendedFeaturedRelations": []string{},
+		"recommendedFileRelations":     []string{},
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":               "obj-1",
+		"name":             "John",
+		"type":             typeID,
+		"contact":          "john@example.com",
+		"lastModifiedDate": 1700000000,
+		"customExtra":      "keep",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "John", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "John.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	if !strings.Contains(note, "lastModifiedDate: 1700000000") {
+		t.Fatalf("expected type-hidden lastModifiedDate to be included, got:\n%s", note)
+	}
+
+	contactIdx := strings.Index(note, "contact: \"john@example.com\"")
+	hiddenIdx := strings.Index(note, "lastModifiedDate: 1700000000")
+	extraIdx := strings.Index(note, "customExtra: \"keep\"")
+	if contactIdx < 0 || hiddenIdx < 0 || extraIdx < 0 {
+		t.Fatalf("expected ordered properties to exist, got:\n%s", note)
+	}
+	if !(contactIdx < hiddenIdx && hiddenIdx < extraIdx) {
+		t.Fatalf("expected type visible then type hidden then non-type order, got:\n%s", note)
+	}
+}
+
 func writePBJSON(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any) {
 	t.Helper()
 	if blocks == nil {
