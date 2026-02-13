@@ -6,14 +6,13 @@ Exporter from Anytype JSON export (`Anytype-json`) to an Obsidian vault.
 
 Anytype markdown export is lossy for important cases (multi-selects, object relations, rich relation metadata). This project uses Anytype json as the source of truth and builds correct markdown notes from it.
 
-## Current Goals
+## Features
 
 - Preserve object-to-object relations.
 - Preserve all fields, including multi-select/tag/status and object relations.
 - Convert content blocks to Obsidian-friendly markdown.
 - Convert tables to markdown tables when possible.
 - Convert files/bookmarks and keep file assets in the vault.
-- Keep raw Anytype details for lossless traceability.
 
 ## Usage
 
