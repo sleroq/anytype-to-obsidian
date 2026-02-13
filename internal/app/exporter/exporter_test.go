@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -457,6 +459,51 @@ func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(output, "files", "sample.txt")); err != nil {
 		t.Fatalf("expected copied file: %v", err)
+	}
+}
+
+func TestExporterAppliesFilesystemTimestampsFromAnytypeDetails(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	createdUnix := int64(1700000000)
+	modifiedUnix := int64(1730000000)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":               "obj-1",
+		"name":             "Timestamped",
+		"createdDate":      createdUnix,
+		"lastModifiedDate": modifiedUnix,
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Timestamped", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	notePath := filepath.Join(output, "notes", "Timestamped.md")
+	info, err := os.Stat(notePath)
+	if err != nil {
+		t.Fatalf("stat note: %v", err)
+	}
+
+	if got := info.ModTime().UTC().Unix(); got != modifiedUnix {
+		t.Fatalf("expected note mtime %d, got %d", modifiedUnix, got)
+	}
+	if runtime.GOOS == "darwin" {
+		if got := int64(info.Sys().(*syscall.Stat_t).Birthtimespec.Sec); got != createdUnix {
+			t.Fatalf("expected note birthtime %d, got %d", createdUnix, got)
+		}
 	}
 }
 
@@ -973,6 +1020,27 @@ func TestConvertPropertyValueFormatsDateToDay(t *testing.T) {
 	)
 	if converted != "2024-10-27" {
 		t.Fatalf("expected unix milliseconds string to be converted via type hint, got %#v", converted)
+	}
+}
+
+func TestAnytypeTimestampsPrefersCreatedForAccessAndModifiedForWrite(t *testing.T) {
+	createdUnix := int64(1700000000)
+	changedUnix := int64(1720000000)
+	modifiedUnix := int64(1730000000)
+
+	atime, mtime, ok := anytypeTimestamps(map[string]any{
+		"createdDate":      createdUnix,
+		"changedDate":      changedUnix,
+		"lastModifiedDate": modifiedUnix,
+	})
+	if !ok {
+		t.Fatalf("expected timestamps to be resolved")
+	}
+	if atime.UTC().Unix() != createdUnix {
+		t.Fatalf("expected atime from createdDate %d, got %d", createdUnix, atime.UTC().Unix())
+	}
+	if mtime.UTC().Unix() != modifiedUnix {
+		t.Fatalf("expected mtime from lastModifiedDate %d, got %d", modifiedUnix, mtime.UTC().Unix())
 	}
 }
 

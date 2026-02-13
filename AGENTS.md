@@ -50,6 +50,8 @@ we need to cover our exporter's features with tests so we can make sure we suppo
 2. Property conversion
    - Some object details keys use relation object IDs instead of `relationKey`; resolve via relation index before filtering/mapping.
    - `date` relation format (`relationFormat: 4`) should be exported as `YYYY-MM-DD` in frontmatter; exported values may arrive as unix seconds, unix milliseconds, RFC3339 strings, or date strings.
+   - Exported markdown/template files now apply Anytype timestamps to filesystem times: `lastModifiedDate`/`modifiedDate`/`changedDate` -> file mtime, `createdDate`/`addedDate` -> file atime.
+   - On macOS, exporter additionally sets filesystem birthtime from Anytype `createdDate` via `SetFile -d`, so Obsidian file Created date can differ from Modified date as in source data.
    - `object` relation format: render note links when possible.
    - `link-as-note-properties` can force relation values (`tag`/`status`/`type`) to render as note links; exporter creates synthetic notes for missing option/type objects when needed.
    - `type` relation values can point to IDs from `types/*.pb.json` (not only `objects/`), so keep an id->name index for `types/` as fallback when note link is unavailable.

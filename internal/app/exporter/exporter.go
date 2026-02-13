@@ -193,6 +193,10 @@ type propertyFilters struct {
 	excludeEmpty bool
 }
 
+var createdDateKeys = []string{"createdDate", "addedDate"}
+var changedDateKeys = []string{"changedDate"}
+var modifiedDateKeys = []string{"lastModifiedDate", "modifiedDate"}
+
 func (e Exporter) Run() (Stats, error) {
 	if e.InputDir == "" || e.OutputDir == "" {
 		return Stats{}, fmt.Errorf("input and output directories are required")
@@ -363,6 +367,9 @@ Can I delete this folder?
 		if err := os.WriteFile(templateAbsPath, []byte(content), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write template %s: %w", tmpl.ID, err)
 		}
+		if err := applyExportedFileTimes(templateAbsPath, tmpl.Details); err != nil {
+			return Stats{}, fmt.Errorf("apply template timestamps %s: %w", tmpl.ID, err)
+		}
 	}
 
 	for _, obj := range allObjects {
@@ -387,6 +394,9 @@ Can I delete this folder?
 		body := renderBody(obj, idToObject, notePathByID, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
+		}
+		if err := applyExportedFileTimes(noteAbsPath, obj.Details); err != nil {
+			return Stats{}, fmt.Errorf("apply note timestamps %s: %w", obj.ID, err)
 		}
 
 		rawPath := filepath.Join(rawDir, obj.ID+".json")
@@ -1140,6 +1150,104 @@ func formatDateValue(value any) any {
 	default:
 		return value
 	}
+}
+
+func applyExportedFileTimes(path string, details map[string]any) error {
+	createdTime, hasCreated := firstParsedTimestamp(details, createdDateKeys)
+	atime, mtime, ok := anytypeTimestamps(details)
+	if !ok {
+		return nil
+	}
+	if err := os.Chtimes(path, atime, mtime); err != nil {
+		return err
+	}
+	if hasCreated {
+		if err := setFileCreationTime(path, createdTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func anytypeTimestamps(details map[string]any) (time.Time, time.Time, bool) {
+	created, hasCreated := firstParsedTimestamp(details, createdDateKeys)
+	changed, _ := firstParsedTimestamp(details, changedDateKeys)
+	modified, hasModified := firstParsedTimestamp(details, modifiedDateKeys)
+
+	mtime := modified
+	if !hasModified {
+		mtime = changed
+	}
+	if mtime.IsZero() {
+		mtime = created
+	}
+
+	atime := created
+	if !hasCreated {
+		atime = changed
+	}
+	if atime.IsZero() {
+		atime = mtime
+	}
+
+	if atime.IsZero() || mtime.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	return atime, mtime, true
+}
+
+func firstParsedTimestamp(details map[string]any, keys []string) (time.Time, bool) {
+	if len(details) == 0 {
+		return time.Time{}, false
+	}
+	for _, key := range keys {
+		raw, ok := details[key]
+		if !ok {
+			continue
+		}
+		parsed, ok := parseAnytypeTimestamp(raw)
+		if ok {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseAnytypeTimestamp(value any) (time.Time, bool) {
+	toUnixSeconds := func(v int64) int64 {
+		if v > 1_000_000_000_000 || v < -1_000_000_000_000 {
+			return v / 1000
+		}
+		return v
+	}
+
+	switch t := value.(type) {
+	case float64:
+		sec := toUnixSeconds(int64(t))
+		return time.Unix(sec, 0).UTC(), true
+	case int:
+		sec := toUnixSeconds(int64(t))
+		return time.Unix(sec, 0).UTC(), true
+	case int64:
+		sec := toUnixSeconds(t)
+		return time.Unix(sec, 0).UTC(), true
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return time.Time{}, false
+		}
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return time.Unix(toUnixSeconds(i), 0).UTC(), true
+		}
+		if tm, err := time.Parse(time.RFC3339, s); err == nil {
+			return tm.UTC(), true
+		}
+		if tm, err := time.Parse("2006-01-02", s); err == nil {
+			return tm.UTC(), true
+		}
+	}
+
+	return time.Time{}, false
 }
 
 func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string) string {
