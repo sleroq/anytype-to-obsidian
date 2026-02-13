@@ -3,6 +3,7 @@
 We are creating anytype-to-obsidian exporter. Anytype's exports are in ./Anytype-md/ and ./Anytype-json/ folders. Anytype-md is mostly useless as it's losing data as multi-selects and relations
 
 We need to read exported data from Anytype-json and create exporter which:
+
 - preserves all of the relations between the objects
 - preserves all of the fields, inclusing multi-selects and selects with objects
 - preserves tables and embeds if it's possible to convert them to obsidian alternative
@@ -13,6 +14,65 @@ in the anytype-heart folder we have anytype's backend which might be helpful to 
 
 we need to cover our exporter's features with tests so we can make sure we support properties mentioned above
 
+## Context
+
+- Source of truth: `Anytype-json`.
+- `Anytype-md` is intentionally not used due to data loss.
+- Target: Obsidian-compatible markdown + filesystem assets.
+
+## Key Anytype Export Facts
+
+- Files are protobuf-snapshot JSON (`.pb.json`).
+- Entity folders:
+  - `objects/` - regular content objects.
+  - `relations/` - relation definitions (`relationKey`, `relationFormat`).
+  - `relationsOptions/` - options for tag/status-like relations.
+  - `types/` - object type definitions.
+  - `templates/` - template objects.
+  - `filesObjects/` - file object metadata.
+  - `files/` - binary file assets.
+
+## DDD Shape (lightweight)
+
+- `internal/domain`: entities + value conversion rules.
+- `internal/infra/anytypejson`: export reader/parser.
+- `internal/app/exporter`: orchestration and markdown projection.
+- `cmd/anytype-to-obsidian`: CLI entrypoint.
+
+## Mapping Rules (may be changed later)
+
+1. Build indexes
+   - object id -> object snapshot
+   - relation key -> relation definition
+   - relation option id -> option object
+   - file object id -> source file path
+
+2. Property conversion
+   - `object` relation format: render note links when possible.
+   - `tag` / `status`: map option IDs to option names.
+   - `file`: map file object IDs to `files/<name>`.
+   - unknown/missing metadata: preserve raw value.
+
+3. Block conversion
+   - text -> markdown text/styles.
+   - file block -> markdown link/image.
+   - bookmark block -> markdown link.
+   - latex block -> `$$...$$`.
+   - table block -> markdown table (best effort).
+   - unsupported block -> raw fallback snippet.
+
+4. Preservation
+   - frontmatter for readable properties.
+   - sidecar raw JSON per object for lossless data (`_anytype/raw`).
+   - global index file for deterministic mapping (`_anytype/index.json`).
+
+## Test Focus
+
+- relation mapping correctness (object/tag/status/file).
+- multi-select preservation.
+- table conversion behavior.
+- file/bookmark rendering.
+- output determinism for filename mapping.
 
 ### Test
 
