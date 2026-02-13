@@ -824,6 +824,126 @@ func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *te
 	}
 }
 
+func TestExporterGeneratesTemplatesFromTemplateBlocks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+	mustMkdirAll(t, filepath.Join(input, "types"))
+	mustMkdirAll(t, filepath.Join(input, "templates"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-date-of-birth.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-date-of-birth",
+		"relationKey":    "dateOfBirth",
+		"relationFormat": 4,
+		"name":           "Birthday",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-custom.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-custom",
+		"relationKey":    "65eddcbe8efc1e005b0cb88d",
+		"relationFormat": 8,
+		"name":           "Another Email",
+	}, nil)
+
+	typeID := "type-human"
+	writePBJSON(t, filepath.Join(input, "types", typeID+".pb.json"), "STType", map[string]any{
+		"id":   typeID,
+		"name": "Human",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "templates", "tmpl-1.pb.json"), "Template", map[string]any{
+		"id":               "tmpl-1",
+		"name":             "Contact",
+		"targetObjectType": typeID,
+	}, []map[string]any{
+		{"id": "tmpl-1", "childrenIds": []string{"title", "rel-a", "rel-a-dup", "rel-b", "body"}},
+		{"id": "title", "text": map[string]any{"text": "Contact", "style": "Title"}},
+		{"id": "rel-a", "relation": map[string]any{"key": "dateOfBirth"}},
+		{"id": "rel-a-dup", "relation": map[string]any{"key": "dateOfBirth"}},
+		{"id": "rel-b", "relation": map[string]any{"key": "65eddcbe8efc1e005b0cb88d"}},
+		{"id": "body", "text": map[string]any{"text": "Template body", "style": "Paragraph"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	templateBytes, err := os.ReadFile(filepath.Join(output, "templates", "Human - Contact.md"))
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+	template := string(templateBytes)
+	if !strings.Contains(template, "anytype_template_id: \"tmpl-1\"") {
+		t.Fatalf("expected template id frontmatter, got:\n%s", template)
+	}
+	if !strings.Contains(template, "anytype_target_type: \"Human\"") {
+		t.Fatalf("expected target type name frontmatter, got:\n%s", template)
+	}
+	if !strings.Contains(template, "dateOfBirth: null") {
+		t.Fatalf("expected relation block field to be exported, got:\n%s", template)
+	}
+	if !strings.Contains(template, "Another Email: null") {
+		t.Fatalf("expected custom relation block field to use relation name, got:\n%s", template)
+	}
+	if strings.Count(template, "dateOfBirth: null") != 1 {
+		t.Fatalf("expected duplicate relation blocks to be deduplicated, got:\n%s", template)
+	}
+	if !strings.Contains(template, "Template body") {
+		t.Fatalf("expected template body text to be rendered, got:\n%s", template)
+	}
+}
+
+func TestExporterTemplateFileNamesAvoidIDsAndUseNumericSuffixes(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+	mustMkdirAll(t, filepath.Join(input, "types"))
+	mustMkdirAll(t, filepath.Join(input, "templates"))
+
+	typeID := "type-human"
+	writePBJSON(t, filepath.Join(input, "types", typeID+".pb.json"), "STType", map[string]any{
+		"id":   typeID,
+		"name": "Human",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "templates", "tmpl-alpha.pb.json"), "Template", map[string]any{
+		"id":               "tmpl-alpha",
+		"targetObjectType": typeID,
+	}, []map[string]any{{"id": "tmpl-alpha", "childrenIds": []string{}}})
+
+	writePBJSON(t, filepath.Join(input, "templates", "tmpl-beta.pb.json"), "Template", map[string]any{
+		"id":               "tmpl-beta",
+		"targetObjectType": typeID,
+	}, []map[string]any{{"id": "tmpl-beta", "childrenIds": []string{}}})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "templates", "Human - Template.md")); err != nil {
+		t.Fatalf("expected first template file without id fallback, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "templates", "Human - Template-2.md")); err != nil {
+		t.Fatalf("expected collision suffix for second template, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "templates", "Human - tmpl-alpha.md")); err == nil {
+		t.Fatalf("did not expect id-based template filename")
+	}
+}
+
 func TestConvertPropertyValueFormatsDateToDay(t *testing.T) {
 	converted := convertPropertyValue(
 		"dueDate",

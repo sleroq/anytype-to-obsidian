@@ -12,11 +12,9 @@ Anytype markdown export is lossy for important cases (multi-selects, object rela
 - Preserve relation-backed fields, including multi-select/tag/status, object, file, and type relations.
 - Resolve relation keys by relation key or relation object ID, with readable frontmatter keys where possible.
 - Apply type-aware frontmatter ordering: type-visible properties first, then type-hidden properties, then remaining properties.
-- Convert date relation values to `YYYY-MM-DD` from unix seconds/milliseconds, RFC3339, or date strings.
-- Convert supported blocks (text, file, bookmark, latex, link, table) to Obsidian-friendly markdown; unsupported blocks are skipped.
-- Keep deterministic note mapping: title fallback (`name` -> Title block -> `title` -> object id), deterministic collision suffixes, and configurable filename escaping (`auto`, `posix`, `windows`).
+- Convert supported blocks (text, file, bookmark, latex, link, table) to Obsidian-friendly markdown
 - Optionally render selected relation values as note links (`-link-as-note-properties`), including synthetic notes for missing tag/status/type option/type objects.
-- Export `_anytype/index.json` and per-object `_anytype/raw/*.json` sidecars with `{id, sbType, details}`.
+- Export templates
 
 ## Usage
 
@@ -60,6 +58,7 @@ Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules;
 ## Output Structure
 
 - `notes/*.md` - exported notes.
+- `templates/*.md` - exported templates from Anytype with type-prefixed filenames (e.g., `Human - Contact.md`).
 - `files/*` - copied assets from Anytype export.
 - `_anytype/index.json` - mapping and metadata index.
 - `_anytype/raw/*.json` - raw details for each exported object.

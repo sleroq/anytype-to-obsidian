@@ -63,6 +63,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - bookmark block -> markdown link.
    - latex block -> `$$...$$`.
    - link block -> wiki-link to exported note when target is known.
+   - template relation blocks (`blocks[*].relation.key`) -> template frontmatter keys when exporting files from `templates/`.
    - table block -> markdown table (best effort).
    - unsupported block -> skip (no fallback snippet yet).
 

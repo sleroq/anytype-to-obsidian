@@ -52,6 +52,7 @@ type block struct {
 	Bookmark *bookmarkBlock `json:"bookmark"`
 	Latex    *latexBlock    `json:"latex"`
 	Link     *linkBlock     `json:"link"`
+	Relation *relationBlock `json:"relation"`
 	Layout   *layoutBlock   `json:"layout"`
 	Table    map[string]any `json:"table"`
 }
@@ -83,6 +84,10 @@ type linkBlock struct {
 
 type layoutBlock struct {
 	Style string `json:"style"`
+}
+
+type relationBlock struct {
+	Key string `json:"key"`
 }
 
 type relationDef struct {
@@ -120,6 +125,15 @@ type objectInfo struct {
 	Blocks  []block
 }
 
+type templateInfo struct {
+	ID           string
+	Name         string
+	SbType       string
+	Details      map[string]any
+	Blocks       []block
+	TargetTypeID string
+}
+
 type indexFile struct {
 	Notes map[string]string `json:"notes"`
 }
@@ -145,28 +159,31 @@ var dynamicPropertyKeys = map[string]struct{}{
 }
 
 var defaultHiddenPropertyKeys = map[string]struct{}{
-	"creator":           {},
-	"coverX":            {},
-	"coverY":            {},
-	"coverType":         {},
-	"coverScale":        {},
-	"coverId":           {},
-	"oldAnytypeID":      {},
-	"origin":            {},
-	"createdDate":       {},
-	"featuredRelations": {},
-	"id":                {},
-	"importType":        {},
-	"internalFlags":     {},
-	"layout":            {},
-	"layoutAlign":       {},
-	"resolvedLayout":    {},
-	"snippet":           {},
-	"name":              {},
-	"restrictions":      {},
-	"sourceObject":      {},
-	"spaceId":           {},
-	"anytype_id":        {},
+	"creator":                {},
+	"coverX":                 {},
+	"coverY":                 {},
+	"coverType":              {},
+	"coverScale":             {},
+	"coverId":                {},
+	"oldAnytypeID":           {},
+	"origin":                 {},
+	"createdDate":            {},
+	"featuredRelations":      {},
+	"id":                     {},
+	"importType":             {},
+	"internalFlags":          {},
+	"layout":                 {},
+	"layoutAlign":            {},
+	"resolvedLayout":         {},
+	"snippet":                {},
+	"name":                   {},
+	"restrictions":           {},
+	"sourceObject":           {},
+	"spaceId":                {},
+	"anytype_id":             {},
+	"anytype_template_id":    {},
+	"anytype_target_type_id": {},
+	"anytype_target_type":    {},
 }
 
 type propertyFilters struct {
@@ -206,6 +223,10 @@ func (e Exporter) Run() (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	templates, err := readTemplates(filepath.Join(e.InputDir, "templates"))
+	if err != nil {
+		return Stats{}, err
+	}
 	typesByID, err := readTypes(filepath.Join(e.InputDir, "types"))
 	if err != nil {
 		return Stats{}, err
@@ -213,11 +234,35 @@ func (e Exporter) Run() (Stats, error) {
 
 	noteDir := filepath.Join(e.OutputDir, "notes")
 	rawDir := filepath.Join(e.OutputDir, "_anytype", "raw")
+	templateDir := filepath.Join(e.OutputDir, "templates")
 	if err := os.MkdirAll(noteDir, 0o755); err != nil {
+		return Stats{}, err
+	}
+	if err := os.MkdirAll(templateDir, 0o755); err != nil {
 		return Stats{}, err
 	}
 	if err := os.MkdirAll(rawDir, 0o755); err != nil {
 		return Stats{}, err
+	}
+
+	anytypeDir := filepath.Join(e.OutputDir, "_anytype")
+	rawReadme := strings.TrimSpace(`This folder stores exporter metadata for this vault.
+
+What is inside:
+- index.json with deterministic object ID -> note path mapping
+- raw/ with one JSON sidecar per exported object: <object-id>.json
+- each raw sidecar keeps original Anytype fields: id, sbType, details
+
+Why it exists:
+- Preserves metadata that may not fit cleanly into Obsidian markdown/frontmatter
+- Helps with debugging and future re-mapping without re-reading .pb.json snapshots
+
+Can I delete this folder?
+	- Yes, if you do not need exporter metadata.
+- Deleting it will not break existing markdown notes in this export.
+- If needed, you can restore it by running the exporter again.`) + "\n"
+	if err := os.WriteFile(filepath.Join(anytypeDir, "README.md"), []byte(rawReadme), 0o644); err != nil {
+		return Stats{}, fmt.Errorf("write raw metadata readme: %w", err)
 	}
 
 	copiedFiles, err := copyDir(filepath.Join(e.InputDir, "files"), filepath.Join(e.OutputDir, "files"))
@@ -247,6 +292,30 @@ func (e Exporter) Run() (Stats, error) {
 			base = base + "-" + strconv.Itoa(n+1)
 		}
 		notePathByID[obj.ID] = filepath.ToSlash(filepath.Join("notes", base+".md"))
+	}
+
+	templatePathByID := make(map[string]string, len(templates))
+	usedTemplateNames := map[string]int{}
+	for _, tmpl := range templates {
+		typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
+		templateName := inferTemplateTitle(tmpl)
+		if strings.TrimSpace(templateName) == "" {
+			templateName = "Template"
+		}
+		base := sanitizeName(typeName+" - "+templateName, filenameEscaping)
+		if base == "" {
+			base = sanitizeName(typeName+" - Template", filenameEscaping)
+		}
+		if base == "" {
+			base = "Template"
+		}
+		usedKey := filenameCollisionKey(base, filenameEscaping)
+		n := usedTemplateNames[usedKey]
+		usedTemplateNames[usedKey] = n + 1
+		if n > 0 {
+			base = base + "-" + strconv.Itoa(n+1)
+		}
+		templatePathByID[tmpl.ID] = filepath.ToSlash(filepath.Join("templates", base+".md"))
 	}
 
 	idToObject := make(map[string]objectInfo, len(allObjects))
@@ -282,6 +351,18 @@ func (e Exporter) Run() (Stats, error) {
 	optionNamesByID := make(map[string]string, len(optionsByID))
 	for id, option := range optionsByID {
 		optionNamesByID[id] = option.Name
+	}
+
+	for _, tmpl := range templates {
+		templateRelPath := templatePathByID[tmpl.ID]
+		templateAbsPath := filepath.Join(e.OutputDir, filepath.FromSlash(templateRelPath))
+		if err := os.MkdirAll(filepath.Dir(templateAbsPath), 0o755); err != nil {
+			return Stats{}, err
+		}
+		content := renderTemplate(tmpl, relations, typesByID, idToObject, notePathByID, fileObjects)
+		if err := os.WriteFile(templateAbsPath, []byte(content), 0o644); err != nil {
+			return Stats{}, fmt.Errorf("write template %s: %w", tmpl.ID, err)
+		}
 	}
 
 	for _, obj := range allObjects {
@@ -322,10 +403,10 @@ func (e Exporter) Run() (Stats, error) {
 
 	idx := indexFile{Notes: notePathByID}
 	indexBytes, _ := json.MarshalIndent(idx, "", "  ")
-	if err := os.MkdirAll(filepath.Join(e.OutputDir, "_anytype"), 0o755); err != nil {
+	if err := os.MkdirAll(anytypeDir, 0o755); err != nil {
 		return Stats{}, err
 	}
-	if err := os.WriteFile(filepath.Join(e.OutputDir, "_anytype", "index.json"), indexBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(anytypeDir, "index.json"), indexBytes, 0o644); err != nil {
 		return Stats{}, err
 	}
 
@@ -495,6 +576,41 @@ func readTypes(dir string) (map[string]typeDef, error) {
 			Hidden:          anyToStringSlice(f.Snapshot.Data.Details["recommendedHiddenRelations"]),
 		}
 	}
+	return out, nil
+}
+
+func readTemplates(dir string) ([]templateInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read templates dir: %w", err)
+	}
+
+	out := make([]templateInfo, 0)
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
+			continue
+		}
+		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
+		if err != nil {
+			return nil, err
+		}
+		id := asString(f.Snapshot.Data.Details["id"])
+		if id == "" {
+			id = strings.TrimSuffix(ent.Name(), ".pb.json")
+		}
+		out = append(out, templateInfo{
+			ID:           id,
+			Name:         strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
+			SbType:       f.SbType,
+			Details:      f.Snapshot.Data.Details,
+			Blocks:       f.Snapshot.Data.Blocks,
+			TargetTypeID: strings.TrimSpace(asString(f.Snapshot.Data.Details["targetObjectType"])),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
 
@@ -1042,6 +1158,124 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 		renderBlock(&buf, byID, id, notes, fileObjects, 0)
 	}
 	return strings.TrimLeft(buf.String(), "\n")
+}
+
+func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesByID map[string]typeDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string) string {
+	typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
+	keys := collectTemplateRelationKeys(tmpl)
+
+	var buf bytes.Buffer
+	buf.WriteString("---\n")
+	writeYAMLKeyValue(&buf, "anytype_template_id", tmpl.ID)
+	if tmpl.TargetTypeID != "" {
+		writeYAMLKeyValue(&buf, "anytype_target_type_id", tmpl.TargetTypeID)
+	}
+	if typeName != "" {
+		writeYAMLKeyValue(&buf, "anytype_target_type", typeName)
+	}
+
+	used := map[string]struct{}{}
+	for _, raw := range keys {
+		rel, hasRel := relations[raw]
+		outKey := frontmatterKey(raw, rel, hasRel)
+		if outKey == "" {
+			outKey = raw
+		}
+		if _, exists := used[outKey]; exists {
+			continue
+		}
+		used[outKey] = struct{}{}
+		writeYAMLKeyValue(&buf, outKey, nil)
+	}
+	buf.WriteString("---\n\n")
+
+	body := renderBody(objectInfo{ID: tmpl.ID, Name: tmpl.Name, Details: tmpl.Details, Blocks: tmpl.Blocks}, objects, notes, fileObjects)
+	buf.WriteString(body)
+	return buf.String()
+}
+
+func inferTemplateTypeName(typeID string, typesByID map[string]typeDef) string {
+	typeID = strings.TrimSpace(typeID)
+	if typeID == "" {
+		return "Unknown Type"
+	}
+	if t, ok := typesByID[typeID]; ok {
+		if name := strings.TrimSpace(t.Name); name != "" {
+			return name
+		}
+	}
+	return typeID
+}
+
+func inferTemplateTitle(tmpl templateInfo) string {
+	if name := strings.TrimSpace(tmpl.Name); name != "" {
+		return name
+	}
+
+	byID := make(map[string]block, len(tmpl.Blocks))
+	for _, b := range tmpl.Blocks {
+		byID[b.ID] = b
+	}
+
+	if root, ok := byID[tmpl.ID]; ok {
+		for _, childID := range root.ChildrenID {
+			child, exists := byID[childID]
+			if !exists || child.Text == nil {
+				continue
+			}
+			if child.Text.Style != "Title" {
+				continue
+			}
+			title := strings.TrimSpace(child.Text.Text)
+			if title != "" {
+				return title
+			}
+		}
+	}
+
+	if title := strings.TrimSpace(asString(tmpl.Details["title"])); title != "" {
+		return title
+	}
+
+	return ""
+}
+
+func collectTemplateRelationKeys(tmpl templateInfo) []string {
+	byID := make(map[string]block, len(tmpl.Blocks))
+	for _, b := range tmpl.Blocks {
+		byID[b.ID] = b
+	}
+	root, ok := byID[tmpl.ID]
+	if !ok {
+		return nil
+	}
+
+	ordered := make([]string, 0)
+	seen := make(map[string]struct{})
+	var visit func(string)
+	visit = func(id string) {
+		b, ok := byID[id]
+		if !ok {
+			return
+		}
+		if b.Relation != nil {
+			key := strings.TrimSpace(b.Relation.Key)
+			if key != "" {
+				if _, exists := seen[key]; !exists {
+					seen[key] = struct{}{}
+					ordered = append(ordered, key)
+				}
+			}
+		}
+		for _, cid := range b.ChildrenID {
+			visit(cid)
+		}
+	}
+
+	for _, id := range root.ChildrenID {
+		visit(id)
+	}
+	return ordered
 }
 
 func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int) {
