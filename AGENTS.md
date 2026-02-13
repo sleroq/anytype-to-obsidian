@@ -108,6 +108,16 @@ we need to cover our exporter's features with tests so we can make sure we suppo
   - `go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault`
 - Include dynamic/system-managed Anytype properties:
   - `go run ./cmd/anytype-to-obsidian -include-dynamic-properties`
+- Exclude specific properties even when they are normally included:
+  - `go run ./cmd/anytype-to-obsidian -exclude-properties "id,spaceId"`
+- Force-include specific properties without enabling all dynamic ones:
+  - `go run ./cmd/anytype-to-obsidian -force-include-properties "anytype_id,lastModifiedDate"`
+
+### Property Filtering Notes
+
+- `dynamicPropertyKeys` covers system-managed fields that can be globally enabled by `-include-dynamic-properties`.
+- `defaultHiddenPropertyKeys` covers non-dynamic fields that are still hidden by default.
+- Property filter precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules.
 
 ## Code Style Guidelines
 

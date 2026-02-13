@@ -84,6 +84,14 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
 		"id":                       "obj-1",
 		"name":                     "Task One",
+		"author":                   "john",
+		"layout":                   "note",
+		"internalFlags":            []any{"flag-a"},
+		"sourceObject":             "obj-3",
+		"spaceId":                  "space-1",
+		"importType":               "local",
+		"createdDate":              1720000000,
+		"featuredRelations":        []any{"status"},
 		"related":                  []any{"obj-2"},
 		"status":                   []any{"opt-status-doing"},
 		"65edf2aa8efc1e005b0cb9d2": []any{"opt-task-type-bug"},
@@ -137,6 +145,24 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	}
 	if strings.Contains(note, "Last Modified Date:") {
 		t.Fatalf("expected relation-id lastModifiedDate to be excluded by default, got:\n%s", note)
+	}
+	if strings.Contains(note, "anytype_id:") {
+		t.Fatalf("expected anytype_id to be excluded by default, got:\n%s", note)
+	}
+	for _, hiddenKey := range []string{
+		"author:",
+		"layout:",
+		"internalFlags:",
+		"sourceObject:",
+		"spaceId:",
+		"importType:",
+		"createdDate:",
+		"featuredRelations:",
+		"id:",
+	} {
+		if strings.Contains(note, hiddenKey) {
+			t.Fatalf("expected %s to be excluded by default, got:\n%s", hiddenKey, note)
+		}
 	}
 
 	if _, err := os.Stat(filepath.Join(output, "_anytype", "raw", "obj-1.json")); err != nil {
@@ -218,6 +244,72 @@ func TestExporterIncludesDynamicPropertiesWhenEnabled(t *testing.T) {
 	note := string(noteBytes)
 	if !strings.Contains(note, "backlinks: \"obj-2\"") {
 		t.Fatalf("expected backlinks to be included when enabled, got:\n%s", note)
+	}
+}
+
+func TestExporterSupportsPropertyIncludeExcludeOverrides(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-backlinks.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-backlinks",
+		"relationKey":    "backlinks",
+		"relationFormat": 100,
+		"name":           "Backlinks",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-2.pb.json"), "Page", map[string]any{
+		"id":   "obj-2",
+		"name": "Task Two",
+	}, []map[string]any{
+		{"id": "obj-2", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task Two", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":        "obj-1",
+		"name":      "Task One",
+		"layout":    "note",
+		"backlinks": []any{"obj-2"},
+		"custom":    "hidden",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{
+		InputDir:                 input,
+		OutputDir:                output,
+		ExcludePropertyKeys:      []string{"custom", "backlinks"},
+		ForceIncludePropertyKeys: []string{"anytype_id", "layout", "backlinks"},
+	}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "anytype_id: \"obj-1\"") {
+		t.Fatalf("expected anytype_id to be force-included, got:\n%s", note)
+	}
+	if !strings.Contains(note, "layout: \"note\"") {
+		t.Fatalf("expected layout to be force-included, got:\n%s", note)
+	}
+	if !strings.Contains(note, "backlinks: \"[[notes/Task Two.md]]\"") {
+		t.Fatalf("expected force-include to win over exclude for backlinks, got:\n%s", note)
+	}
+	if strings.Contains(note, "custom:") {
+		t.Fatalf("expected custom to be excluded, got:\n%s", note)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/sleroq/anytype-to-obsidian/internal/app/exporter"
 )
@@ -14,12 +15,16 @@ func main() {
 	var filenameEscaping string
 	var includeDynamicProperties bool
 	var includeArchivedProperties bool
+	var excludeProperties string
+	var includeProperties string
 
 	flag.StringVar(&input, "input", "./Anytype-json", "Path to Anytype-json export directory")
 	flag.StringVar(&output, "output", "./obsidian-vault", "Path to output Obsidian vault")
 	flag.StringVar(&filenameEscaping, "filename-escaping", "auto", "Filename escaping mode: auto, posix, windows")
 	flag.BoolVar(&includeDynamicProperties, "include-dynamic-properties", false, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
 	flag.BoolVar(&includeArchivedProperties, "include-archived-properties", false, "Include archived/unresolved Anytype relation properties that have no readable relation name")
+	flag.StringVar(&excludeProperties, "exclude-properties", "", "Comma-separated property keys/names to always exclude from frontmatter")
+	flag.StringVar(&includeProperties, "force-include-properties", "", "Comma-separated property keys/names to always include in frontmatter")
 	flag.Parse()
 
 	exp := exporter.Exporter{
@@ -28,6 +33,8 @@ func main() {
 		FilenameEscaping:          filenameEscaping,
 		IncludeDynamicProperties:  includeDynamicProperties,
 		IncludeArchivedProperties: includeArchivedProperties,
+		ExcludePropertyKeys:       parseCommaSeparatedList(excludeProperties),
+		ForceIncludePropertyKeys:  parseCommaSeparatedList(includeProperties),
 	}
 
 	stats, err := exp.Run()
@@ -37,4 +44,23 @@ func main() {
 	}
 
 	fmt.Printf("exported %d notes, copied %d files\n", stats.Notes, stats.Files)
+}
+
+func parseCommaSeparatedList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

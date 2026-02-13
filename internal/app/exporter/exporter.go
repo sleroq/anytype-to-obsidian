@@ -20,6 +20,8 @@ type Exporter struct {
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
 	IncludeArchivedProperties bool
+	ExcludePropertyKeys       []string
+	ForceIncludePropertyKeys  []string
 }
 
 type Stats struct {
@@ -119,6 +121,27 @@ var dynamicPropertyKeys = map[string]struct{}{
 	"syncStatus":         {},
 }
 
+var defaultHiddenPropertyKeys = map[string]struct{}{
+	"author":            {},
+	"createdDate":       {},
+	"featuredRelations": {},
+	"id":                {},
+	"importType":        {},
+	"internalFlags":     {},
+	"layout":            {},
+	"layoutAlign":       {},
+	"resolvedLayout":    {},
+	"snippets":          {},
+	"sourceObject":      {},
+	"spaceId":           {},
+	"anytype_id":        {},
+}
+
+type propertyFilters struct {
+	exclude      map[string]struct{}
+	forceInclude map[string]struct{}
+}
+
 func (e Exporter) Run() (Stats, error) {
 	if e.InputDir == "" || e.OutputDir == "" {
 		return Stats{}, fmt.Errorf("input and output directories are required")
@@ -186,6 +209,8 @@ func (e Exporter) Run() (Stats, error) {
 		idToObject[o.ID] = o
 	}
 
+	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys)
+
 	for _, obj := range objects {
 		noteRelPath := notePathByID[obj.ID]
 		noteAbsPath := filepath.Join(e.OutputDir, filepath.FromSlash(noteRelPath))
@@ -193,7 +218,16 @@ func (e Exporter) Run() (Stats, error) {
 			return Stats{}, err
 		}
 
-		fm := renderFrontmatter(obj, relations, optionsByID, notePathByID, fileObjects, e.IncludeDynamicProperties, e.IncludeArchivedProperties)
+		fm := renderFrontmatter(
+			obj,
+			relations,
+			optionsByID,
+			notePathByID,
+			fileObjects,
+			e.IncludeDynamicProperties,
+			e.IncludeArchivedProperties,
+			filters,
+		)
 		body := renderBody(obj, idToObject, notePathByID, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
@@ -359,7 +393,7 @@ func readSnapshot(path string) (snapshotFile, error) {
 	return s, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
 	keys := make([]string, 0, len(obj.Details))
 	for k := range obj.Details {
 		keys = append(keys, k)
@@ -368,24 +402,20 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
-	buf.WriteString("anytype_id: ")
-	writeYAMLString(&buf, obj.ID)
-	buf.WriteString("\n")
+	includeAnytypeID := shouldIncludeFrontmatterProperty("anytype_id", relationDef{}, false, includeDynamicProperties, includeArchivedProperties, filters)
+	if includeAnytypeID {
+		buf.WriteString("anytype_id: ")
+		writeYAMLString(&buf, obj.ID)
+		buf.WriteString("\n")
+	}
 
-	usedKeys := map[string]struct{}{"anytype_id": {}}
+	usedKeys := map[string]struct{}{}
+	if includeAnytypeID {
+		usedKeys["anytype_id"] = struct{}{}
+	}
 	for _, k := range keys {
 		rel, hasRel := relations[k]
-		if !includeDynamicProperties {
-			if _, dynamic := dynamicPropertyKeys[k]; dynamic {
-				continue
-			}
-			if hasRel {
-				if _, dynamic := dynamicPropertyKeys[rel.Key]; dynamic {
-					continue
-				}
-			}
-		}
-		if !includeArchivedProperties && shouldSkipUnnamedProperty(k, rel, hasRel) {
+		if !shouldIncludeFrontmatterProperty(k, rel, hasRel, includeDynamicProperties, includeArchivedProperties, filters) {
 			continue
 		}
 		v := obj.Details[k]
@@ -400,6 +430,94 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 
 	buf.WriteString("---\n\n")
 	return buf.String()
+}
+
+func newPropertyFilters(exclude []string, forceInclude []string) propertyFilters {
+	return propertyFilters{
+		exclude:      normalizePropertyKeySet(exclude),
+		forceInclude: normalizePropertyKeySet(forceInclude),
+	}
+}
+
+func normalizePropertyKeySet(keys []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		norm := normalizePropertyKey(key)
+		if norm == "" {
+			continue
+		}
+		out[norm] = struct{}{}
+	}
+	return out
+}
+
+func normalizePropertyKey(key string) string {
+	return strings.ToLower(strings.TrimSpace(key))
+}
+
+func propertyCandidates(rawKey string, rel relationDef, hasRel bool) []string {
+	candidates := make([]string, 0, 3)
+	if rawKey != "" {
+		candidates = append(candidates, rawKey)
+	}
+	if hasRel {
+		if rel.Key != "" && rel.Key != rawKey {
+			candidates = append(candidates, rel.Key)
+		}
+		if rel.Name != "" {
+			candidates = append(candidates, rel.Name)
+		}
+	}
+	return candidates
+}
+
+func (f propertyFilters) hasForceInclude(rawKey string, rel relationDef, hasRel bool) bool {
+	for _, candidate := range propertyCandidates(rawKey, rel, hasRel) {
+		if _, ok := f.forceInclude[normalizePropertyKey(candidate)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (f propertyFilters) hasExclude(rawKey string, rel relationDef, hasRel bool) bool {
+	for _, candidate := range propertyCandidates(rawKey, rel, hasRel) {
+		if _, ok := f.exclude[normalizePropertyKey(candidate)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel bool, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) bool {
+	if filters.hasForceInclude(rawKey, rel, hasRel) {
+		return true
+	}
+	if filters.hasExclude(rawKey, rel, hasRel) {
+		return false
+	}
+	if _, hidden := defaultHiddenPropertyKeys[rawKey]; hidden {
+		return false
+	}
+	if hasRel {
+		if _, hidden := defaultHiddenPropertyKeys[rel.Key]; hidden {
+			return false
+		}
+	}
+	if !includeDynamicProperties {
+		if _, dynamic := dynamicPropertyKeys[rawKey]; dynamic {
+			return false
+		}
+		if hasRel {
+			if _, dynamic := dynamicPropertyKeys[rel.Key]; dynamic {
+				return false
+			}
+		}
+	}
+	if !includeArchivedProperties && shouldSkipUnnamedProperty(rawKey, rel, hasRel) {
+		return false
+	}
+	return true
 }
 
 func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {

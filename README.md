@@ -29,30 +29,26 @@ Flags:
 - `-output`: target Obsidian vault path.
 - `-include-dynamic-properties`: include dynamic/system-managed Anytype properties in note frontmatter.
 - `-include-archived-properties`: include archived/unresolved relation properties that do not have readable relation names in the export.
+- `-exclude-properties`: comma-separated list of property keys/names to always exclude from frontmatter.
+- `-force-include-properties`: comma-separated list of property keys/names to always include in frontmatter.
 
 Dynamic properties are excluded by default because Obsidian manages equivalents itself (for example backlinks), and these values are backend-managed in Anytype.
 
 Archived/unresolved relation properties are also excluded by default when the exporter cannot resolve a readable relation name. Use `-include-archived-properties` to keep those raw keys.
 
-Default excluded dynamic property keys:
+### Property Filtering
 
-- `addedDate`
-- `backlinks`
-- `fileBackupStatus`
-- `fileIndexingStatus`
-- `fileSyncStatus`
-- `lastMessageDate`
-- `lastModifiedBy`
-- `lastModifiedDate`
-- `lastOpenedBy`
-- `lastOpenedDate`
-- `lastUsedDate`
-- `links`
-- `mentions`
-- `revision`
-- `syncDate`
-- `syncError`
-- `syncStatus`
+The exporter hides certain properties by default to keep frontmatter clean:
+
+- **Dynamic properties** (e.g., `backlinks`, `lastModifiedDate`, `lastOpenedDate`, `syncStatus`) — excluded by default; enable with `-include-dynamic-properties`.
+- **Internal properties** (e.g., `id`, `spaceId`, `layout`, `createdDate`, `internalFlags`, `featuredRelations`) — always excluded to avoid clutter.
+
+To override these rules for specific properties:
+
+- Use `-force-include-properties "anytype_id,lastModifiedDate"` to include specific properties without enabling all dynamic ones.
+- Use `-exclude-properties "customField,backlinks"` to explicitly exclude properties even when they would normally be included.
+
+Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules.
 
 ## Output Structure
 
