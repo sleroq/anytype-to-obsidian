@@ -18,6 +18,7 @@ func main() {
 	var excludeEmptyProperties bool
 	var excludeProperties string
 	var includeProperties string
+	var linkAsNoteProperties string
 
 	flag.StringVar(&input, "input", "./Anytype-json", "Path to Anytype-json export directory")
 	flag.StringVar(&output, "output", "./obsidian-vault", "Path to output Obsidian vault")
@@ -27,6 +28,7 @@ func main() {
 	flag.BoolVar(&excludeEmptyProperties, "exclude-empty-properties", false, "Exclude frontmatter properties with empty values (nil, empty strings, empty arrays, empty objects)")
 	flag.StringVar(&excludeProperties, "exclude-properties", "", "Comma-separated property keys/names to always exclude from frontmatter")
 	flag.StringVar(&includeProperties, "force-include-properties", "", "Comma-separated property keys/names to always include in frontmatter")
+	flag.StringVar(&linkAsNoteProperties, "link-as-note-properties", "", "Comma-separated property keys/names to render relation values as note links when possible (e.g. type,tag,status)")
 	flag.Parse()
 
 	exp := exporter.Exporter{
@@ -38,6 +40,7 @@ func main() {
 		ExcludeEmptyProperties:    excludeEmptyProperties,
 		ExcludePropertyKeys:       parseCommaSeparatedList(excludeProperties),
 		ForceIncludePropertyKeys:  parseCommaSeparatedList(includeProperties),
+		LinkAsNotePropertyKeys:    parseCommaSeparatedList(linkAsNoteProperties),
 	}
 
 	stats, err := exp.Run()

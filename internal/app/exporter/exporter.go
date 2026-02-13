@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -23,6 +24,7 @@ type Exporter struct {
 	ExcludeEmptyProperties    bool
 	ExcludePropertyKeys       []string
 	ForceIncludePropertyKeys  []string
+	LinkAsNotePropertyKeys    []string
 }
 
 type Stats struct {
@@ -93,10 +95,21 @@ type relationDef struct {
 type typeDef struct {
 	ID              string
 	Name            string
+	SbType          string
+	Details         map[string]any
+	Blocks          []block
 	Featured        []string
 	Recommended     []string
 	RecommendedFile []string
 	Hidden          []string
+}
+
+type relationOption struct {
+	ID      string
+	Name    string
+	SbType  string
+	Details map[string]any
+	Blocks  []block
 }
 
 type objectInfo struct {
@@ -159,6 +172,7 @@ var defaultHiddenPropertyKeys = map[string]struct{}{
 type propertyFilters struct {
 	exclude      map[string]struct{}
 	forceInclude map[string]struct{}
+	linkAsNote   map[string]struct{}
 	excludeEmpty bool
 }
 
@@ -211,9 +225,16 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, err
 	}
 
-	notePathByID := make(map[string]string, len(objects))
+	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys, e.LinkAsNotePropertyKeys, e.ExcludeEmptyProperties)
+	syntheticObjects := buildSyntheticLinkObjects(objects, relations, optionsByID, typesByID, filters)
+
+	allObjects := make([]objectInfo, 0, len(objects)+len(syntheticObjects))
+	allObjects = append(allObjects, objects...)
+	allObjects = append(allObjects, syntheticObjects...)
+
+	notePathByID := make(map[string]string, len(allObjects))
 	used := map[string]int{}
-	for _, obj := range objects {
+	for _, obj := range allObjects {
 		title := inferObjectTitle(obj)
 		base := sanitizeName(title, filenameEscaping)
 		if base == "" {
@@ -228,9 +249,9 @@ func (e Exporter) Run() (Stats, error) {
 		notePathByID[obj.ID] = filepath.ToSlash(filepath.Join("notes", base+".md"))
 	}
 
-	idToObject := make(map[string]objectInfo, len(objects))
-	objectNamesByID := make(map[string]string, len(objects)+len(typesByID))
-	for _, o := range objects {
+	idToObject := make(map[string]objectInfo, len(allObjects))
+	objectNamesByID := make(map[string]string, len(allObjects)+len(typesByID)+len(optionsByID))
+	for _, o := range allObjects {
 		idToObject[o.ID] = o
 		if name := strings.TrimSpace(o.Name); name != "" {
 			objectNamesByID[o.ID] = name
@@ -247,9 +268,23 @@ func (e Exporter) Run() (Stats, error) {
 		objectNamesByID[id] = name
 	}
 
-	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys, e.ExcludeEmptyProperties)
+	for id, option := range optionsByID {
+		name := strings.TrimSpace(option.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := objectNamesByID[id]; exists {
+			continue
+		}
+		objectNamesByID[id] = name
+	}
 
-	for _, obj := range objects {
+	optionNamesByID := make(map[string]string, len(optionsByID))
+	for id, option := range optionsByID {
+		optionNamesByID[id] = option.Name
+	}
+
+	for _, obj := range allObjects {
 		noteRelPath := notePathByID[obj.ID]
 		noteAbsPath := filepath.Join(e.OutputDir, filepath.FromSlash(noteRelPath))
 		if err := os.MkdirAll(filepath.Dir(noteAbsPath), 0o755); err != nil {
@@ -260,7 +295,7 @@ func (e Exporter) Run() (Stats, error) {
 			obj,
 			relations,
 			typesByID,
-			optionsByID,
+			optionNamesByID,
 			notePathByID,
 			objectNamesByID,
 			fileObjects,
@@ -294,7 +329,7 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, err
 	}
 
-	return Stats{Notes: len(objects), Files: copiedFiles}, nil
+	return Stats{Notes: len(allObjects), Files: copiedFiles}, nil
 }
 
 func readObjects(dir string) ([]objectInfo, error) {
@@ -362,12 +397,12 @@ func readRelations(dir string) (map[string]relationDef, error) {
 	return out, nil
 }
 
-func readOptions(dir string) (map[string]string, error) {
+func readOptions(dir string) (map[string]relationOption, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read relation options dir: %w", err)
 	}
-	out := make(map[string]string)
+	out := make(map[string]relationOption)
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
 			continue
@@ -380,7 +415,13 @@ func readOptions(dir string) (map[string]string, error) {
 		if id == "" {
 			continue
 		}
-		out[id] = asString(f.Snapshot.Data.Details["name"])
+		out[id] = relationOption{
+			ID:      id,
+			Name:    strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
+			SbType:  f.SbType,
+			Details: f.Snapshot.Data.Details,
+			Blocks:  f.Snapshot.Data.Blocks,
+		}
 	}
 	return out, nil
 }
@@ -445,6 +486,9 @@ func readTypes(dir string) (map[string]typeDef, error) {
 		out[id] = typeDef{
 			ID:              id,
 			Name:            strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
+			SbType:          f.SbType,
+			Details:         f.Snapshot.Data.Details,
+			Blocks:          f.Snapshot.Data.Blocks,
 			Featured:        anyToStringSlice(f.Snapshot.Data.Details["recommendedFeaturedRelations"]),
 			Recommended:     anyToStringSlice(f.Snapshot.Data.Details["recommendedRelations"]),
 			RecommendedFile: anyToStringSlice(f.Snapshot.Data.Details["recommendedFileRelations"]),
@@ -467,7 +511,7 @@ func readSnapshot(path string) (snapshotFile, error) {
 }
 
 func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
-	keys, includeByType := orderedFrontmatterKeys(obj, relations, typesByID)
+	keys, includeByType, dateByType := orderedFrontmatterKeys(obj, relations, typesByID)
 
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
@@ -488,7 +532,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 			continue
 		}
 		v := obj.Details[k]
-		converted := convertPropertyValue(k, v, relations, optionsByID, notes, objectNamesByID, fileObjects)
+		converted := convertPropertyValue(k, v, relations, optionsByID, notes, objectNamesByID, fileObjects, dateByType[k], filters.hasLinkAsNote(k, rel, hasRel))
 		if filters.excludeEmpty && isEmptyFrontmatterValue(converted) {
 			continue
 		}
@@ -504,7 +548,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 	return buf.String()
 }
 
-func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef) ([]string, map[string]bool) {
+func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef) ([]string, map[string]bool, map[string]bool) {
 	keys := make([]string, 0, len(obj.Details))
 	for k := range obj.Details {
 		keys = append(keys, k)
@@ -514,6 +558,7 @@ func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, ty
 	ordered := make([]string, 0, len(keys))
 	seen := make(map[string]struct{}, len(keys))
 	includeByType := map[string]bool{}
+	dateByType := map[string]bool{}
 
 	appendUnique := func(k string, fromType bool) {
 		if k == "" {
@@ -543,10 +588,18 @@ func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, ty
 			visibleRefs = append(visibleRefs, typeInfo.Recommended...)
 			visibleRefs = append(visibleRefs, typeInfo.RecommendedFile...)
 			for _, ref := range visibleRefs {
-				appendUnique(resolveTypeRelationRefToDetailKey(ref, obj.Details, relations), true)
+				resolved := resolveTypeRelationRefToDetailKey(ref, obj.Details, relations)
+				appendUnique(resolved, true)
+				if resolved != "" && isDateRelationRef(ref, relations) {
+					dateByType[resolved] = true
+				}
 			}
 			for _, ref := range typeInfo.Hidden {
-				appendUnique(resolveTypeRelationRefToDetailKey(ref, obj.Details, relations), true)
+				resolved := resolveTypeRelationRefToDetailKey(ref, obj.Details, relations)
+				appendUnique(resolved, true)
+				if resolved != "" && isDateRelationRef(ref, relations) {
+					dateByType[resolved] = true
+				}
 			}
 		}
 	}
@@ -555,7 +608,19 @@ func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, ty
 		appendUnique(k, false)
 	}
 
-	return ordered, includeByType
+	return ordered, includeByType, dateByType
+}
+
+func isDateRelationRef(ref string, relations map[string]relationDef) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false
+	}
+	rel, ok := relations[ref]
+	if !ok {
+		return false
+	}
+	return rel.Format == 4
 }
 
 func resolveTypeRelationRefToDetailKey(ref string, details map[string]any, relations map[string]relationDef) string {
@@ -584,10 +649,11 @@ func resolveTypeRelationRefToDetailKey(ref string, details map[string]any, relat
 	return ""
 }
 
-func newPropertyFilters(exclude []string, forceInclude []string, excludeEmpty bool) propertyFilters {
+func newPropertyFilters(exclude []string, forceInclude []string, linkAsNote []string, excludeEmpty bool) propertyFilters {
 	return propertyFilters{
 		exclude:      normalizePropertyKeySet(exclude),
 		forceInclude: normalizePropertyKeySet(forceInclude),
+		linkAsNote:   normalizePropertyKeySet(linkAsNote),
 		excludeEmpty: excludeEmpty,
 	}
 }
@@ -636,6 +702,15 @@ func (f propertyFilters) hasForceInclude(rawKey string, rel relationDef, hasRel 
 func (f propertyFilters) hasExclude(rawKey string, rel relationDef, hasRel bool) bool {
 	for _, candidate := range propertyCandidates(rawKey, rel, hasRel) {
 		if _, ok := f.exclude[normalizePropertyKey(candidate)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (f propertyFilters) hasLinkAsNote(rawKey string, rel relationDef, hasRel bool) bool {
+	for _, candidate := range propertyCandidates(rawKey, rel, hasRel) {
+		if _, ok := f.linkAsNote[normalizePropertyKey(candidate)]; ok {
 			return true
 		}
 	}
@@ -726,9 +801,12 @@ func isLikelyCIDKey(s string) bool {
 	return true
 }
 
-func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) any {
+func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, dateByType bool, linkAsNote bool) any {
 	rel, hasRel := relations[key]
 	if !hasRel {
+		if dateByType {
+			return formatDateValue(value)
+		}
 		return value
 	}
 
@@ -769,6 +847,12 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		}
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
+			if linkAsNote {
+				if note, ok := notes[id]; ok {
+					out = append(out, "[["+note+"]]")
+					continue
+				}
+			}
 			if n, ok := optionsByID[id]; ok && n != "" {
 				out = append(out, n)
 			} else {
@@ -794,6 +878,147 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		}
 		if len(out) > 1 {
 			return out
+		}
+		return value
+	case 4:
+		return formatDateValue(value)
+	default:
+		return value
+	}
+}
+
+func buildSyntheticLinkObjects(objects []objectInfo, relations map[string]relationDef, optionsByID map[string]relationOption, typesByID map[string]typeDef, filters propertyFilters) []objectInfo {
+	if len(filters.linkAsNote) == 0 {
+		return nil
+	}
+
+	existingIDs := make(map[string]struct{}, len(objects))
+	for _, obj := range objects {
+		existingIDs[obj.ID] = struct{}{}
+	}
+
+	optionIDs := map[string]struct{}{}
+	typeIDs := map[string]struct{}{}
+	for _, obj := range objects {
+		for key, raw := range obj.Details {
+			rel, hasRel := relations[key]
+			if !filters.hasLinkAsNote(key, rel, hasRel) {
+				continue
+			}
+			ids := anyToStringSlice(raw)
+			if len(ids) == 0 {
+				if s := asString(raw); s != "" {
+					ids = []string{s}
+				}
+			}
+			if len(ids) == 0 {
+				continue
+			}
+			for _, id := range ids {
+				switch rel.Format {
+				case 100:
+					if _, ok := typesByID[id]; ok {
+						typeIDs[id] = struct{}{}
+					}
+				case 11, 3:
+					if _, ok := optionsByID[id]; ok {
+						optionIDs[id] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
+	typeIDList := make([]string, 0, len(typeIDs))
+	for id := range typeIDs {
+		typeIDList = append(typeIDList, id)
+	}
+	sort.Strings(typeIDList)
+
+	optionIDList := make([]string, 0, len(optionIDs))
+	for id := range optionIDs {
+		optionIDList = append(optionIDList, id)
+	}
+	sort.Strings(optionIDList)
+
+	out := make([]objectInfo, 0, len(typeIDList)+len(optionIDList))
+	for _, id := range typeIDList {
+		if _, exists := existingIDs[id]; exists {
+			continue
+		}
+		typeInfo, ok := typesByID[id]
+		if !ok {
+			continue
+		}
+		out = append(out, objectInfo{
+			ID:      id,
+			Name:    typeInfo.Name,
+			SbType:  typeInfo.SbType,
+			Details: typeInfo.Details,
+			Blocks:  typeInfo.Blocks,
+		})
+		existingIDs[id] = struct{}{}
+	}
+
+	for _, id := range optionIDList {
+		if _, exists := existingIDs[id]; exists {
+			continue
+		}
+		option, ok := optionsByID[id]
+		if !ok {
+			continue
+		}
+		blocks := option.Blocks
+		if len(blocks) == 0 {
+			blocks = []block{
+				{ID: option.ID, ChildrenID: []string{option.ID + "-title"}},
+				{ID: option.ID + "-title", Text: &textBlock{Text: option.Name, Style: "Title"}},
+			}
+		}
+		out = append(out, objectInfo{
+			ID:      id,
+			Name:    option.Name,
+			SbType:  option.SbType,
+			Details: option.Details,
+			Blocks:  blocks,
+		})
+		existingIDs[id] = struct{}{}
+	}
+
+	return out
+}
+
+func formatDateValue(value any) any {
+	toUnixSeconds := func(v float64) int64 {
+		sec := int64(v)
+		if sec > 1_000_000_000_000 || sec < -1_000_000_000_000 {
+			sec = sec / 1000
+		}
+		return sec
+	}
+
+	switch t := value.(type) {
+	case float64:
+		return time.Unix(toUnixSeconds(t), 0).UTC().Format("2006-01-02")
+	case int:
+		return time.Unix(toUnixSeconds(float64(t)), 0).UTC().Format("2006-01-02")
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return value
+		}
+		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+			sec := i
+			if sec > 1_000_000_000_000 || sec < -1_000_000_000_000 {
+				sec = sec / 1000
+			}
+			return time.Unix(sec, 0).UTC().Format("2006-01-02")
+		}
+		if tm, err := time.Parse(time.RFC3339, s); err == nil {
+			return tm.UTC().Format("2006-01-02")
+		}
+		if tm, err := time.Parse("2006-01-02", s); err == nil {
+			return tm.Format("2006-01-02")
 		}
 		return value
 	default:

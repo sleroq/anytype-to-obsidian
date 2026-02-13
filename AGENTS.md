@@ -49,6 +49,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
 
 2. Property conversion
    - Some object details keys use relation object IDs instead of `relationKey`; resolve via relation index before filtering/mapping.
+   - `date` relation format (`relationFormat: 4`) should be exported as `YYYY-MM-DD` in frontmatter; exported values may arrive as unix seconds, unix milliseconds, RFC3339 strings, or date strings.
    - `object` relation format: render note links when possible.
    - `type` relation values can point to IDs from `types/*.pb.json` (not only `objects/`), so keep an id->name index for `types/` as fallback when note link is unavailable.
    - `tag` / `status`: map option IDs to option names.

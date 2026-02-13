@@ -606,6 +606,129 @@ func TestExporterResolvesTypeRelationFromTypesDirectory(t *testing.T) {
 	}
 }
 
+func TestExporterCanLinkTypePropertyAsNoteAndCreatesTypeNote(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+	mustMkdirAll(t, filepath.Join(input, "types"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-type.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-type",
+		"relationKey":    "type",
+		"relationFormat": 100,
+		"name":           "type",
+	}, nil)
+
+	typeID := "type-human"
+	writePBJSON(t, filepath.Join(input, "types", typeID+".pb.json"), "STType", map[string]any{
+		"id":                           typeID,
+		"name":                         "Human",
+		"pluralName":                   "Humans",
+		"recommendedRelations":         []string{"rel-contact"},
+		"recommendedHiddenRelations":   []string{"rel-last-modified-date"},
+		"recommendedFeaturedRelations": []string{},
+		"recommendedFileRelations":     []string{},
+	}, []map[string]any{
+		{"id": typeID, "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Human", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Dan Brown",
+		"type": typeID,
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Dan Brown", "style": "Title"}},
+	})
+
+	stats, err := (Exporter{InputDir: input, OutputDir: output, LinkAsNotePropertyKeys: []string{"type"}}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+	if stats.Notes != 2 {
+		t.Fatalf("expected object and synthetic type note, got %d", stats.Notes)
+	}
+
+	personNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Dan Brown.md"))
+	if err != nil {
+		t.Fatalf("read person note: %v", err)
+	}
+	personNote := string(personNoteBytes)
+	if !strings.Contains(personNote, "type: \"[[notes/Human.md]]\"") {
+		t.Fatalf("expected type property to be rendered as note link, got:\n%s", personNote)
+	}
+
+	typeNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Human.md"))
+	if err != nil {
+		t.Fatalf("read type note: %v", err)
+	}
+	typeNote := string(typeNoteBytes)
+	if !strings.Contains(typeNote, "pluralName: \"Humans\"") {
+		t.Fatalf("expected synthetic type note to include useful type data, got:\n%s", typeNote)
+	}
+}
+
+func TestExporterCanLinkTagPropertyAsNoteAndCreatesOptionNote(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-tag.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-tag",
+		"relationKey":    "tag",
+		"relationFormat": 11,
+		"name":           "Tag",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-1.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-tag-go",
+		"name": "go",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Tagged Page",
+		"tag":  []any{"opt-tag-go"},
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Tagged Page", "style": "Title"}},
+	})
+
+	stats, err := (Exporter{InputDir: input, OutputDir: output, LinkAsNotePropertyKeys: []string{"tag"}}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+	if stats.Notes != 2 {
+		t.Fatalf("expected object and synthetic tag option note, got %d", stats.Notes)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Tagged Page.md"))
+	if err != nil {
+		t.Fatalf("read page note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "tag: \"[[notes/go.md]]\"") {
+		t.Fatalf("expected tag property to be rendered as note link, got:\n%s", note)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "notes", "go.md")); err != nil {
+		t.Fatalf("expected synthetic tag option note to exist: %v", err)
+	}
+}
+
 func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -665,7 +788,7 @@ func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *te
 	}
 	note := string(noteBytes)
 
-	if strings.Contains(note, "lastModifiedDate: 1700000000") {
+	if strings.Contains(note, "lastModifiedDate:") {
 		t.Fatalf("expected dynamic type-hidden lastModifiedDate to be excluded by default, got:\n%s", note)
 	}
 
@@ -689,15 +812,47 @@ func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *te
 	}
 	note = string(noteBytes)
 
-	if !strings.Contains(note, "lastModifiedDate: 1700000000") {
+	if !strings.Contains(note, "lastModifiedDate: \"2023-11-14\"") {
 		t.Fatalf("expected dynamic type-hidden lastModifiedDate to be included when enabled, got:\n%s", note)
 	}
 
 	contactIdx = strings.Index(note, "contact: \"john@example.com\"")
-	hiddenIdx := strings.Index(note, "lastModifiedDate: 1700000000")
+	hiddenIdx := strings.Index(note, "lastModifiedDate: \"2023-11-14\"")
 	extraIdx = strings.Index(note, "customExtra: \"keep\"")
 	if !(contactIdx < hiddenIdx && hiddenIdx < extraIdx) {
 		t.Fatalf("expected type visible then type hidden then non-type order when dynamic is enabled, got:\n%s", note)
+	}
+}
+
+func TestConvertPropertyValueFormatsDateToDay(t *testing.T) {
+	converted := convertPropertyValue(
+		"dueDate",
+		float64(1730000000),
+		map[string]relationDef{"dueDate": {Format: 4}},
+		nil,
+		nil,
+		nil,
+		nil,
+		false,
+		false,
+	)
+	if converted != "2024-10-27" {
+		t.Fatalf("expected unix seconds to be converted to YYYY-MM-DD, got %#v", converted)
+	}
+
+	converted = convertPropertyValue(
+		"dateByTypeOnly",
+		"1730000000000",
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		true,
+		false,
+	)
+	if converted != "2024-10-27" {
+		t.Fatalf("expected unix milliseconds string to be converted via type hint, got %#v", converted)
 	}
 }
 
