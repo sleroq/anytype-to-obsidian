@@ -119,6 +119,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
 - `dynamicPropertyKeys` covers system-managed fields that can be globally enabled by `-include-dynamic-properties`.
 - `defaultHiddenPropertyKeys` covers non-dynamic fields that are still hidden by default.
 - Property filter precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules.
+- `includeByType` (type-recommended keys) must not bypass default hidden/dynamic filters; it should only prevent dropping opaque/unnamed keys via archived-property filtering.
 - Type-aware frontmatter order should use `types/*.pb.json` lists in this order: `recommendedFeaturedRelations` + `recommendedRelations` + `recommendedFileRelations`, then `recommendedHiddenRelations`, then remaining object keys.
 - Relation IDs in type recommendation lists may be stale/missing in `relations/`; always resolve best-effort and keep fallback behavior (do not drop unmatched object properties).
 

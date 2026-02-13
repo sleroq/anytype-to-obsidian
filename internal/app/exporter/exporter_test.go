@@ -149,8 +149,10 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	if strings.Contains(note, "anytype_id:") {
 		t.Fatalf("expected anytype_id to be excluded by default, got:\n%s", note)
 	}
+	if !strings.Contains(note, "author: \"john\"") {
+		t.Fatalf("expected author to be included by default, got:\n%s", note)
+	}
 	for _, hiddenKey := range []string{
-		"author:",
 		"layout:",
 		"internalFlags:",
 		"sourceObject:",
@@ -604,10 +606,11 @@ func TestExporterResolvesTypeRelationFromTypesDirectory(t *testing.T) {
 	}
 }
 
-func TestExporterOrdersTypePropertiesAndIncludesTypeHidden(t *testing.T) {
+func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
-	output := filepath.Join(root, "vault")
+	outputDefault := filepath.Join(root, "vault-default")
+	outputDynamic := filepath.Join(root, "vault-dynamic")
 
 	mustMkdirAll(t, filepath.Join(input, "objects"))
 	mustMkdirAll(t, filepath.Join(input, "relations"))
@@ -651,29 +654,50 @@ func TestExporterOrdersTypePropertiesAndIncludesTypeHidden(t *testing.T) {
 		{"id": "title", "text": map[string]any{"text": "John", "style": "Title"}},
 	})
 
-	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	_, err := (Exporter{InputDir: input, OutputDir: outputDefault}).Run()
 	if err != nil {
 		t.Fatalf("run exporter: %v", err)
 	}
 
-	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "John.md"))
+	noteBytes, err := os.ReadFile(filepath.Join(outputDefault, "notes", "John.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
 
-	if !strings.Contains(note, "lastModifiedDate: 1700000000") {
-		t.Fatalf("expected type-hidden lastModifiedDate to be included, got:\n%s", note)
+	if strings.Contains(note, "lastModifiedDate: 1700000000") {
+		t.Fatalf("expected dynamic type-hidden lastModifiedDate to be excluded by default, got:\n%s", note)
 	}
 
 	contactIdx := strings.Index(note, "contact: \"john@example.com\"")
-	hiddenIdx := strings.Index(note, "lastModifiedDate: 1700000000")
 	extraIdx := strings.Index(note, "customExtra: \"keep\"")
-	if contactIdx < 0 || hiddenIdx < 0 || extraIdx < 0 {
+	if contactIdx < 0 || extraIdx < 0 {
 		t.Fatalf("expected ordered properties to exist, got:\n%s", note)
 	}
+	if !(contactIdx < extraIdx) {
+		t.Fatalf("expected type visible then non-type order, got:\n%s", note)
+	}
+
+	_, err = (Exporter{InputDir: input, OutputDir: outputDynamic, IncludeDynamicProperties: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter with dynamic properties: %v", err)
+	}
+
+	noteBytes, err = os.ReadFile(filepath.Join(outputDynamic, "notes", "John.md"))
+	if err != nil {
+		t.Fatalf("read note with dynamic properties: %v", err)
+	}
+	note = string(noteBytes)
+
+	if !strings.Contains(note, "lastModifiedDate: 1700000000") {
+		t.Fatalf("expected dynamic type-hidden lastModifiedDate to be included when enabled, got:\n%s", note)
+	}
+
+	contactIdx = strings.Index(note, "contact: \"john@example.com\"")
+	hiddenIdx := strings.Index(note, "lastModifiedDate: 1700000000")
+	extraIdx = strings.Index(note, "customExtra: \"keep\"")
 	if !(contactIdx < hiddenIdx && hiddenIdx < extraIdx) {
-		t.Fatalf("expected type visible then type hidden then non-type order, got:\n%s", note)
+		t.Fatalf("expected type visible then type hidden then non-type order when dynamic is enabled, got:\n%s", note)
 	}
 }
 

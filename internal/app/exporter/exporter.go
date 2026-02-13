@@ -649,9 +649,6 @@ func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel boo
 	if filters.hasExclude(rawKey, rel, hasRel) {
 		return false
 	}
-	if includeByType {
-		return true
-	}
 	if _, hidden := defaultHiddenPropertyKeys[rawKey]; hidden {
 		return false
 	}
@@ -670,7 +667,7 @@ func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel boo
 			}
 		}
 	}
-	if !includeArchivedProperties && shouldSkipUnnamedProperty(rawKey, rel, hasRel) {
+	if !includeArchivedProperties && shouldSkipUnnamedProperty(rawKey, rel, hasRel) && !includeByType {
 		return false
 	}
 	return true
