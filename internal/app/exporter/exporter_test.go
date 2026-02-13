@@ -90,7 +90,9 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		"abcdefabcdefabcdefabcdef": []any{"opt-status-doing"},
 		"tag":                      []any{"opt-tag-go", "opt-tag-export"},
 		"backlinks":                []any{"obj-2"},
+		"rel-backlinks":            []any{"obj-2"},
 		"lastModifiedDate":         1730000000,
+		"rel-last-modified-date":   1730000000,
 	}, []map[string]any{
 		{"id": "obj-1", "childrenIds": []string{"title"}},
 		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
@@ -127,8 +129,14 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	if strings.Contains(note, "backlinks:") {
 		t.Fatalf("expected backlinks to be excluded by default, got:\n%s", note)
 	}
+	if strings.Contains(note, "Backlinks:") {
+		t.Fatalf("expected relation-id backlinks to be excluded by default, got:\n%s", note)
+	}
 	if strings.Contains(note, "lastModifiedDate:") {
 		t.Fatalf("expected lastModifiedDate to be excluded by default, got:\n%s", note)
+	}
+	if strings.Contains(note, "Last Modified Date:") {
+		t.Fatalf("expected relation-id lastModifiedDate to be excluded by default, got:\n%s", note)
 	}
 
 	if _, err := os.Stat(filepath.Join(output, "_anytype", "raw", "obj-1.json")); err != nil {

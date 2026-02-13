@@ -364,12 +364,17 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 
 	usedKeys := map[string]struct{}{"anytype_id": {}}
 	for _, k := range keys {
+		rel, hasRel := relations[k]
 		if !includeDynamicProperties {
 			if _, dynamic := dynamicPropertyKeys[k]; dynamic {
 				continue
 			}
+			if hasRel {
+				if _, dynamic := dynamicPropertyKeys[rel.Key]; dynamic {
+					continue
+				}
+			}
 		}
-		rel, hasRel := relations[k]
 		if !includeArchivedProperties && shouldSkipUnnamedProperty(k, rel, hasRel) {
 			continue
 		}
