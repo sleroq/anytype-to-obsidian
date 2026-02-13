@@ -480,6 +480,55 @@ func TestExporterSupportsWindowsFilenameEscaping(t *testing.T) {
 	}
 }
 
+func TestExporterResolvesTypeRelationFromTypesDirectory(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+	mustMkdirAll(t, filepath.Join(input, "types"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-type.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-type",
+		"relationKey":    "type",
+		"relationFormat": 100,
+		"name":           "type",
+	}, nil)
+
+	typeID := "bafyreiaxyq4jrnqouh5ohxikp4tpy2fzkgkrb47kdxwtynfwcrckvg2jti"
+	writePBJSON(t, filepath.Join(input, "types", typeID+".pb.json"), "STType", map[string]any{
+		"id":   typeID,
+		"name": "Human",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Dan Brown",
+		"type": typeID,
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Dan Brown", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Dan Brown.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "type: \"Human\"") {
+		t.Fatalf("expected type relation to be resolved from types directory, got:\n%s", note)
+	}
+}
+
 func writePBJSON(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any) {
 	t.Helper()
 	if blocks == nil {

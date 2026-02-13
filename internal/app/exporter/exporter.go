@@ -181,6 +181,10 @@ func (e Exporter) Run() (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	typeNamesByID, err := readNamesByID(filepath.Join(e.InputDir, "types"))
+	if err != nil {
+		return Stats{}, err
+	}
 
 	noteDir := filepath.Join(e.OutputDir, "notes")
 	rawDir := filepath.Join(e.OutputDir, "_anytype", "raw")
@@ -214,8 +218,21 @@ func (e Exporter) Run() (Stats, error) {
 	}
 
 	idToObject := make(map[string]objectInfo, len(objects))
+	objectNamesByID := make(map[string]string, len(objects)+len(typeNamesByID))
 	for _, o := range objects {
 		idToObject[o.ID] = o
+		if name := strings.TrimSpace(o.Name); name != "" {
+			objectNamesByID[o.ID] = name
+		}
+	}
+	for id, name := range typeNamesByID {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		if _, exists := objectNamesByID[id]; exists {
+			continue
+		}
+		objectNamesByID[id] = name
 	}
 
 	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys)
@@ -232,6 +249,7 @@ func (e Exporter) Run() (Stats, error) {
 			relations,
 			optionsByID,
 			notePathByID,
+			objectNamesByID,
 			fileObjects,
 			e.IncludeDynamicProperties,
 			e.IncludeArchivedProperties,
@@ -390,6 +408,36 @@ func readFileObjects(dir string) (map[string]string, error) {
 	return out, nil
 }
 
+func readNamesByID(dir string) (map[string]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	out := make(map[string]string)
+	for _, ent := range entries {
+		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
+			continue
+		}
+		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
+		if err != nil {
+			return nil, err
+		}
+		id := asString(f.Snapshot.Data.Details["id"])
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(asString(f.Snapshot.Data.Details["name"]))
+		if name == "" {
+			continue
+		}
+		out[id] = name
+	}
+	return out, nil
+}
+
 func readSnapshot(path string) (snapshotFile, error) {
 	var s snapshotFile
 	b, err := os.ReadFile(path)
@@ -402,7 +450,7 @@ func readSnapshot(path string) (snapshotFile, error) {
 	return s, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
 	keys := make([]string, 0, len(obj.Details))
 	for k := range obj.Details {
 		keys = append(keys, k)
@@ -428,7 +476,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 			continue
 		}
 		v := obj.Details[k]
-		converted := convertPropertyValue(k, v, relations, optionsByID, notes, fileObjects)
+		converted := convertPropertyValue(k, v, relations, optionsByID, notes, objectNamesByID, fileObjects)
 		outKey := frontmatterKey(k, rel, hasRel)
 		if _, exists := usedKeys[outKey]; exists {
 			outKey = k
@@ -582,7 +630,7 @@ func isLikelyCIDKey(s string) bool {
 	return true
 }
 
-func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string) any {
+func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) any {
 	rel, hasRel := relations[key]
 	if !hasRel {
 		return value
@@ -603,6 +651,8 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		for _, id := range ids {
 			if note, ok := notes[id]; ok {
 				out = append(out, "[["+note+"]]")
+			} else if name, ok := objectNamesByID[id]; ok && strings.TrimSpace(name) != "" {
+				out = append(out, name)
 			} else {
 				out = append(out, id)
 			}
