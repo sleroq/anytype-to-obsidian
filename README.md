@@ -9,11 +9,14 @@ Anytype markdown export is lossy for important cases (multi-selects, object rela
 ## Features
 
 - Preserve object-to-object relations.
-- Preserve all fields, including multi-select/tag/status and object relations.
+- Preserve relation-backed fields, including multi-select/tag/status, object, file, and type relations.
+- Resolve relation keys by relation key or relation object ID, with readable frontmatter keys where possible.
 - Apply type-aware frontmatter ordering: type-visible properties first, then type-hidden properties, then remaining properties.
-- Convert content blocks to Obsidian-friendly markdown.
-- Convert tables to markdown tables when possible.
-- Convert files/bookmarks and keep file assets in the vault.
+- Convert date relation values to `YYYY-MM-DD` from unix seconds/milliseconds, RFC3339, or date strings.
+- Convert supported blocks (text, file, bookmark, latex, link, table) to Obsidian-friendly markdown; unsupported blocks are skipped.
+- Keep deterministic note mapping: title fallback (`name` -> Title block -> `title` -> object id), deterministic collision suffixes, and configurable filename escaping (`auto`, `posix`, `windows`).
+- Optionally render selected relation values as note links (`-link-as-note-properties`), including synthetic notes for missing tag/status/type option/type objects.
+- Export `_anytype/index.json` and per-object `_anytype/raw/*.json` sidecars with `{id, sbType, details}`.
 
 ## Usage
 
@@ -32,6 +35,8 @@ Flags:
 - `-exclude-empty-properties`: exclude frontmatter properties with empty values (`null`, empty string, empty array, empty object).
 - `-exclude-properties`: comma-separated list of property keys/names to always exclude from frontmatter.
 - `-force-include-properties`: comma-separated list of property keys/names to always include in frontmatter.
+- `-filename-escaping`: filename escaping mode (`auto`, `posix`, `windows`).
+- `-link-as-note-properties`: comma-separated relation property keys/names to render values as note links when possible (for example `type,tag,status`).
 
 Dynamic properties are excluded by default because Obsidian manages equivalents itself (for example backlinks), and these values are backend-managed in Anytype.
 

@@ -5,7 +5,7 @@ We are creating anytype-to-obsidian exporter. Anytype's exports are in ./Anytype
 We need to read exported data from Anytype-json and create exporter which:
 
 - preserves all of the relations between the objects
-- preserves all of the fields, inclusing multi-selects and selects with objects
+- preserves all of the fields, including multi-selects and selects with objects
 - preserves tables and embeds if it's possible to convert them to obsidian alternative
 
 You have anytype-mcp connected so you can query production anytype server which has saygex space, identical to the exports. So we can compare the data if needed.
@@ -51,6 +51,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - Some object details keys use relation object IDs instead of `relationKey`; resolve via relation index before filtering/mapping.
    - `date` relation format (`relationFormat: 4`) should be exported as `YYYY-MM-DD` in frontmatter; exported values may arrive as unix seconds, unix milliseconds, RFC3339 strings, or date strings.
    - `object` relation format: render note links when possible.
+   - `link-as-note-properties` can force relation values (`tag`/`status`/`type`) to render as note links; exporter creates synthetic notes for missing option/type objects when needed.
    - `type` relation values can point to IDs from `types/*.pb.json` (not only `objects/`), so keep an id->name index for `types/` as fallback when note link is unavailable.
    - `tag` / `status`: map option IDs to option names.
    - `file`: map file object IDs to `files/<name>`.
@@ -61,12 +62,13 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - file block -> markdown link/image.
    - bookmark block -> markdown link.
    - latex block -> `$$...$$`.
+   - link block -> wiki-link to exported note when target is known.
    - table block -> markdown table (best effort).
-   - unsupported block -> raw fallback snippet.
+   - unsupported block -> skip (no fallback snippet yet).
 
 4. Preservation
    - frontmatter for readable properties.
-   - sidecar raw JSON per object for lossless data (`_anytype/raw`).
+   - sidecar raw JSON per object with `{id, sbType, details}` (`_anytype/raw`).
    - global index file for deterministic mapping (`_anytype/index.json`).
    - note filenames must prefer object `details.name`; fallback to root `Title` block text, then `details.title`, then object id.
    - filename collisions must be resolved deterministically with numeric suffixes (`name.md`, `name-2.md`, ...).
@@ -108,12 +110,16 @@ we need to cover our exporter's features with tests so we can make sure we suppo
   - `go run ./cmd/anytype-to-obsidian`
 - Run with explicit paths:
   - `go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault`
+- Force filename escaping behavior:
+  - `go run ./cmd/anytype-to-obsidian -filename-escaping auto`
 - Include dynamic/system-managed Anytype properties:
   - `go run ./cmd/anytype-to-obsidian -include-dynamic-properties`
 - Exclude specific properties even when they are normally included:
   - `go run ./cmd/anytype-to-obsidian -exclude-properties "id,spaceId"`
 - Force-include specific properties without enabling all dynamic ones:
   - `go run ./cmd/anytype-to-obsidian -force-include-properties "anytype_id,lastModifiedDate"`
+- Render selected relation values as note links:
+  - `go run ./cmd/anytype-to-obsidian -link-as-note-properties "type,tag,status"`
 
 ### Property Filtering Notes
 
