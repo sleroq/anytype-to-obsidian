@@ -106,12 +106,12 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		t.Fatalf("expected 2 notes, got %d", stats.Notes)
 	}
 
-	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "task-one.md"))
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "related: \"[[notes/task-two.md]]\"") {
+	if !strings.Contains(note, "related: \"[[notes/Task Two.md]]\"") {
 		t.Fatalf("expected related object relation to be rendered, got:\n%s", note)
 	}
 	if !strings.Contains(note, "status: \"Doing\"") {
@@ -169,7 +169,7 @@ func TestExporterIncludesArchivedPropertiesWhenEnabled(t *testing.T) {
 		t.Fatalf("run exporter: %v", err)
 	}
 
-	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "task-one.md"))
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestExporterIncludesDynamicPropertiesWhenEnabled(t *testing.T) {
 		t.Fatalf("run exporter: %v", err)
 	}
 
-	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "task-one.md"))
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 		t.Fatalf("run exporter: %v", err)
 	}
 
-	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "table-page.md"))
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Table Page.md"))
 	if err != nil {
 		t.Fatalf("read note: %v", err)
 	}
@@ -288,6 +288,103 @@ func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(output, "files", "sample.txt")); err != nil {
 		t.Fatalf("expected copied file: %v", err)
+	}
+}
+
+func TestExporterUsesAnytypeNameForNoteFileNameAndHandlesCollisions(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Readable Name",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title-1"}},
+		{"id": "title-1", "text": map[string]any{"text": "Displayed Title One", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-2.pb.json"), "Page", map[string]any{
+		"id":   "obj-2",
+		"name": "Readable Name",
+	}, []map[string]any{
+		{"id": "obj-2", "childrenIds": []string{"title-2"}},
+		{"id": "title-2", "text": map[string]any{"text": "Displayed Title Two", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "notes", "Readable Name.md")); err != nil {
+		t.Fatalf("expected first name-based note file, got error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Readable Name-2.md")); err != nil {
+		t.Fatalf("expected collision-safe second name-based note file, got error: %v", err)
+	}
+
+	indexBytes, err := os.ReadFile(filepath.Join(output, "_anytype", "index.json"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+
+	var idx indexFile
+	if err := json.Unmarshal(indexBytes, &idx); err != nil {
+		t.Fatalf("decode index: %v", err)
+	}
+
+	if got := idx.Notes["obj-1"]; got != "notes/Readable Name.md" {
+		t.Fatalf("unexpected note path for obj-1: %q", got)
+	}
+	if got := idx.Notes["obj-2"]; got != "notes/Readable Name-2.md" {
+		t.Fatalf("unexpected note path for obj-2: %q", got)
+	}
+}
+
+func TestExporterSupportsWindowsFilenameEscaping(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "CON",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title-1"}},
+		{"id": "title-1", "text": map[string]any{"text": "Ignored Title", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-2.pb.json"), "Page", map[string]any{
+		"id":   "obj-2",
+		"name": "a:b* c?",
+	}, []map[string]any{
+		{"id": "obj-2", "childrenIds": []string{"title-2"}},
+		{"id": "title-2", "text": map[string]any{"text": "Ignored Title", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, FilenameEscaping: "windows"}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "notes", "CON-file.md")); err != nil {
+		t.Fatalf("expected windows-safe reserved-name file, got error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "a-b- c-.md")); err != nil {
+		t.Fatalf("expected windows-safe escaped file, got error: %v", err)
 	}
 }
 

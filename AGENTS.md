@@ -66,6 +66,9 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - frontmatter for readable properties.
    - sidecar raw JSON per object for lossless data (`_anytype/raw`).
    - global index file for deterministic mapping (`_anytype/index.json`).
+   - note filenames must prefer object `details.name`; fallback to root `Title` block text, then `details.title`, then object id.
+   - filename collisions must be resolved deterministically with numeric suffixes (`name.md`, `name-2.md`, ...).
+   - filename escaping mode is configurable: `auto` (by runtime OS), `posix`, `windows`.
 
 ## Test Focus
 

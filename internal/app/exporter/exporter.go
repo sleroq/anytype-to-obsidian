@@ -7,14 +7,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Exporter struct {
 	InputDir                  string
 	OutputDir                 string
+	FilenameEscaping          string
 	IncludeDynamicProperties  bool
 	IncludeArchivedProperties bool
 }
@@ -125,6 +128,11 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, fmt.Errorf("create output dir: %w", err)
 	}
 
+	filenameEscaping, err := resolveFilenameEscaping(e.FilenameEscaping)
+	if err != nil {
+		return Stats{}, err
+	}
+
 	objects, err := readObjects(filepath.Join(e.InputDir, "objects"))
 	if err != nil {
 		return Stats{}, err
@@ -159,12 +167,14 @@ func (e Exporter) Run() (Stats, error) {
 	notePathByID := make(map[string]string, len(objects))
 	used := map[string]int{}
 	for _, obj := range objects {
-		base := sanitizeName(obj.Name)
+		title := inferObjectTitle(obj)
+		base := sanitizeName(title, filenameEscaping)
 		if base == "" {
 			base = obj.ID
 		}
-		n := used[base]
-		used[base] = n + 1
+		usedKey := filenameCollisionKey(base, filenameEscaping)
+		n := used[usedKey]
+		used[usedKey] = n + 1
 		if n > 0 {
 			base = base + "-" + strconv.Itoa(n+1)
 		}
@@ -553,7 +563,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	} else if b.File != nil {
 		path := fileObjects[b.File.TargetObjectID]
 		if path == "" {
-			path = filepath.ToSlash(filepath.Join("files", sanitizeName(strings.TrimSpace(b.File.Name))))
+			path = filepath.ToSlash(filepath.Join("files", sanitizeName(strings.TrimSpace(b.File.Name), "posix")))
 		}
 		if strings.EqualFold(b.File.Type, "image") {
 			buf.WriteString("![" + escapeBrackets(b.File.Name) + "](" + path + ")\n")
@@ -843,29 +853,121 @@ func sanitizeYAMLKey(s string) string {
 	return s
 }
 
-func sanitizeName(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
+func sanitizeName(s string, mode string) string {
+	s = strings.TrimSpace(s)
 	if s == "" {
 		return ""
 	}
 	var b strings.Builder
-	prevDash := false
 	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevDash = false
+		if isForbiddenFileNameRune(r, mode) {
+			b.WriteRune('-')
 			continue
 		}
-		if !prevDash {
-			b.WriteRune('-')
-			prevDash = true
-		}
+		b.WriteRune(r)
 	}
-	out := strings.Trim(b.String(), "-")
+	out := strings.TrimSpace(b.String())
+	if mode == "windows" {
+		out = strings.TrimRight(out, ". ")
+	}
+	out = strings.Trim(out, "/")
+	if out == "." || out == ".." {
+		out = ""
+	}
+	if mode == "windows" && isWindowsReservedName(out) {
+		out = out + "-file"
+	}
 	if out == "" {
 		return "untitled"
 	}
 	return out
+}
+
+func inferObjectTitle(obj objectInfo) string {
+	if name := strings.TrimSpace(obj.Name); name != "" {
+		return name
+	}
+
+	byID := make(map[string]block, len(obj.Blocks))
+	for _, b := range obj.Blocks {
+		byID[b.ID] = b
+	}
+
+	if root, ok := byID[obj.ID]; ok {
+		for _, childID := range root.ChildrenID {
+			child, exists := byID[childID]
+			if !exists || child.Text == nil {
+				continue
+			}
+			if child.Text.Style != "Title" {
+				continue
+			}
+			title := strings.TrimSpace(child.Text.Text)
+			if title != "" {
+				return title
+			}
+		}
+	}
+
+	if title := strings.TrimSpace(asString(obj.Details["title"])); title != "" {
+		return title
+	}
+
+	return obj.ID
+}
+
+func resolveFilenameEscaping(mode string) (string, error) {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "" || mode == "auto" {
+		if runtime.GOOS == "windows" {
+			return "windows", nil
+		}
+		return "posix", nil
+	}
+	if mode == "posix" || mode == "windows" {
+		return mode, nil
+	}
+	return "", fmt.Errorf("invalid filename escaping mode %q: expected auto, posix, or windows", mode)
+}
+
+func filenameCollisionKey(name string, mode string) string {
+	if mode == "windows" {
+		return strings.ToLower(name)
+	}
+	return name
+}
+
+func isForbiddenFileNameRune(r rune, mode string) bool {
+	if r == 0 || r == '/' || unicode.IsControl(r) {
+		return true
+	}
+	if mode != "windows" {
+		return false
+	}
+	switch r {
+	case '<', '>', ':', '"', '\\', '|', '?', '*':
+		return true
+	default:
+		return false
+	}
+}
+
+func isWindowsReservedName(name string) bool {
+	if name == "" {
+		return false
+	}
+	upper := strings.ToUpper(strings.TrimSpace(name))
+	if idx := strings.IndexRune(upper, '.'); idx >= 0 {
+		upper = upper[:idx]
+	}
+	switch upper {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	default:
+		return false
+	}
 }
 
 func asString(v any) string {
