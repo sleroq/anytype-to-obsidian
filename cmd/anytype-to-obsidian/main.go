@@ -11,14 +11,17 @@ import (
 func main() {
 	var input string
 	var output string
+	var includeDynamicProperties bool
 
 	flag.StringVar(&input, "input", "./Anytype-json", "Path to Anytype-json export directory")
 	flag.StringVar(&output, "output", "./obsidian-vault", "Path to output Obsidian vault")
+	flag.BoolVar(&includeDynamicProperties, "include-dynamic-properties", false, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
 	flag.Parse()
 
 	exp := exporter.Exporter{
-		InputDir:  input,
-		OutputDir: output,
+		InputDir:                 input,
+		OutputDir:                output,
+		IncludeDynamicProperties: includeDynamicProperties,
 	}
 
 	stats, err := exp.Run()

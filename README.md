@@ -27,6 +27,29 @@ Flags:
 
 - `-input`: path to `Anytype-json` directory.
 - `-output`: target Obsidian vault path.
+- `-include-dynamic-properties`: include dynamic/system-managed Anytype properties in note frontmatter.
+
+Dynamic properties are excluded by default because Obsidian manages equivalents itself (for example backlinks), and these values are backend-managed in Anytype.
+
+Default excluded dynamic property keys:
+
+- `addedDate`
+- `backlinks`
+- `fileBackupStatus`
+- `fileIndexingStatus`
+- `fileSyncStatus`
+- `lastMessageDate`
+- `lastModifiedBy`
+- `lastModifiedDate`
+- `lastOpenedBy`
+- `lastOpenedDate`
+- `lastUsedDate`
+- `links`
+- `mentions`
+- `revision`
+- `syncDate`
+- `syncError`
+- `syncStatus`
 
 ## Output Structure
 

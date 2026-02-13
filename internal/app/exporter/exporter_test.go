@@ -37,6 +37,18 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		"relationFormat": 11,
 		"name":           "Tag",
 	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-backlinks.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-backlinks",
+		"relationKey":    "backlinks",
+		"relationFormat": 100,
+		"name":           "Backlinks",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-last-modified-date.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-last-modified-date",
+		"relationKey":    "lastModifiedDate",
+		"relationFormat": 4,
+		"name":           "Last Modified Date",
+	}, nil)
 
 	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-status.pb.json"), "STRelationOption", map[string]any{
 		"id":   "opt-status-doing",
@@ -60,11 +72,13 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	})
 
 	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
-		"id":      "obj-1",
-		"name":    "Task One",
-		"related": []any{"obj-2"},
-		"status":  []any{"opt-status-doing"},
-		"tag":     []any{"opt-tag-go", "opt-tag-export"},
+		"id":               "obj-1",
+		"name":             "Task One",
+		"related":          []any{"obj-2"},
+		"status":           []any{"opt-status-doing"},
+		"tag":              []any{"opt-tag-go", "opt-tag-export"},
+		"backlinks":        []any{"obj-2"},
+		"lastModifiedDate": 1730000000,
 	}, []map[string]any{
 		{"id": "obj-1", "childrenIds": []string{"title"}},
 		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
@@ -92,9 +106,57 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	if !strings.Contains(note, "tag:") || !strings.Contains(note, "- \"go\"") || !strings.Contains(note, "- \"export\"") {
 		t.Fatalf("expected multi tag values, got:\n%s", note)
 	}
+	if strings.Contains(note, "backlinks:") {
+		t.Fatalf("expected backlinks to be excluded by default, got:\n%s", note)
+	}
+	if strings.Contains(note, "lastModifiedDate:") {
+		t.Fatalf("expected lastModifiedDate to be excluded by default, got:\n%s", note)
+	}
 
 	if _, err := os.Stat(filepath.Join(output, "_anytype", "raw", "obj-1.json")); err != nil {
 		t.Fatalf("expected raw sidecar: %v", err)
+	}
+}
+
+func TestExporterIncludesDynamicPropertiesWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-backlinks.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-backlinks",
+		"relationKey":    "backlinks",
+		"relationFormat": 100,
+		"name":           "Backlinks",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":        "obj-1",
+		"name":      "Task One",
+		"backlinks": []any{"obj-2"},
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, IncludeDynamicProperties: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "task-one.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "backlinks: \"obj-2\"") {
+		t.Fatalf("expected backlinks to be included when enabled, got:\n%s", note)
 	}
 }
 

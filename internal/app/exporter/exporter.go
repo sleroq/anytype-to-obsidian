@@ -13,8 +13,9 @@ import (
 )
 
 type Exporter struct {
-	InputDir  string
-	OutputDir string
+	InputDir                 string
+	OutputDir                string
+	IncludeDynamicProperties bool
 }
 
 type Stats struct {
@@ -93,6 +94,26 @@ type indexFile struct {
 	Notes map[string]string `json:"notes"`
 }
 
+var dynamicPropertyKeys = map[string]struct{}{
+	"addedDate":          {},
+	"backlinks":          {},
+	"fileBackupStatus":   {},
+	"fileIndexingStatus": {},
+	"fileSyncStatus":     {},
+	"lastMessageDate":    {},
+	"lastModifiedBy":     {},
+	"lastModifiedDate":   {},
+	"lastOpenedBy":       {},
+	"lastOpenedDate":     {},
+	"lastUsedDate":       {},
+	"links":              {},
+	"mentions":           {},
+	"revision":           {},
+	"syncDate":           {},
+	"syncError":          {},
+	"syncStatus":         {},
+}
+
 func (e Exporter) Run() (Stats, error) {
 	if e.InputDir == "" || e.OutputDir == "" {
 		return Stats{}, fmt.Errorf("input and output directories are required")
@@ -160,7 +181,7 @@ func (e Exporter) Run() (Stats, error) {
 			return Stats{}, err
 		}
 
-		fm := renderFrontmatter(obj, relations, optionsByID, notePathByID, fileObjects)
+		fm := renderFrontmatter(obj, relations, optionsByID, notePathByID, fileObjects, e.IncludeDynamicProperties)
 		body := renderBody(obj, idToObject, notePathByID, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
@@ -318,7 +339,7 @@ func readSnapshot(path string) (snapshotFile, error) {
 	return s, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool) string {
 	keys := make([]string, 0, len(obj.Details))
 	for k := range obj.Details {
 		keys = append(keys, k)
@@ -332,6 +353,11 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 	buf.WriteString("\n")
 
 	for _, k := range keys {
+		if !includeDynamicProperties {
+			if _, dynamic := dynamicPropertyKeys[k]; dynamic {
+				continue
+			}
+		}
 		v := obj.Details[k]
 		converted := convertPropertyValue(k, v, relations, optionsByID, notes, fileObjects)
 		writeYAMLKeyValue(&buf, k, converted)
