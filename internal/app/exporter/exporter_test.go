@@ -44,8 +44,8 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		"name":           "Backlinks",
 	}, nil)
 	writePBJSON(t, filepath.Join(input, "relations", "rel-task-type.pb.json"), "STRelation", map[string]any{
-		"id":             "65edf2aa8efc1e005b0cb9d2",
-		"relationKey":    "taskType",
+		"id":             "bafyreihowvwq6jmco67ilpwej23jopfic3stteazzbdonl7bvfkfdbk2de",
+		"relationKey":    "65edf2aa8efc1e005b0cb9d2",
 		"relationFormat": 3,
 		"name":           "Task Type",
 	}, nil)

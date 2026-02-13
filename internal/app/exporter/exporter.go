@@ -399,7 +399,10 @@ func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
 	if rel.Name == "" {
 		return rawKey
 	}
-	if rel.Key != "" && rawKey != rel.Key {
+	if rawKey != rel.Key {
+		return rel.Name
+	}
+	if isLikelyOpaqueAnytypeKey(rawKey) {
 		return rel.Name
 	}
 	return rawKey
@@ -409,7 +412,11 @@ func shouldSkipUnnamedProperty(key string, rel relationDef, hasRel bool) bool {
 	if hasRel {
 		return strings.TrimSpace(rel.Name) == ""
 	}
-	return isLikelyAnytypeObjectID(key)
+	return isLikelyOpaqueAnytypeKey(key)
+}
+
+func isLikelyOpaqueAnytypeKey(s string) bool {
+	return isLikelyAnytypeObjectID(s) || isLikelyCIDKey(s)
 }
 
 func isLikelyAnytypeObjectID(s string) bool {
@@ -418,6 +425,19 @@ func isLikelyAnytypeObjectID(s string) bool {
 	}
 	for _, r := range s {
 		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isLikelyCIDKey(s string) bool {
+	if len(s) < 20 || !strings.HasPrefix(s, "bafy") {
+		return false
+	}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '2' && r <= '7') {
 			continue
 		}
 		return false
