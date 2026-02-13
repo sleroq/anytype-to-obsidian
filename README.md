@@ -28,8 +28,11 @@ Flags:
 - `-input`: path to `Anytype-json` directory.
 - `-output`: target Obsidian vault path.
 - `-include-dynamic-properties`: include dynamic/system-managed Anytype properties in note frontmatter.
+- `-include-archived-properties`: include archived/unresolved relation properties that do not have readable relation names in the export.
 
 Dynamic properties are excluded by default because Obsidian manages equivalents itself (for example backlinks), and these values are backend-managed in Anytype.
+
+Archived/unresolved relation properties are also excluded by default when the exporter cannot resolve a readable relation name. Use `-include-archived-properties` to keep those raw keys.
 
 Default excluded dynamic property keys:
 

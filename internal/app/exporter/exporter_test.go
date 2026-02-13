@@ -43,6 +43,12 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		"relationFormat": 100,
 		"name":           "Backlinks",
 	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-task-type.pb.json"), "STRelation", map[string]any{
+		"id":             "65edf2aa8efc1e005b0cb9d2",
+		"relationKey":    "taskType",
+		"relationFormat": 3,
+		"name":           "Task Type",
+	}, nil)
 	writePBJSON(t, filepath.Join(input, "relations", "rel-last-modified-date.pb.json"), "STRelation", map[string]any{
 		"id":             "rel-last-modified-date",
 		"relationKey":    "lastModifiedDate",
@@ -62,6 +68,10 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		"id":   "opt-tag-export",
 		"name": "export",
 	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-task-type.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-task-type-bug",
+		"name": "Bug",
+	}, nil)
 
 	writePBJSON(t, filepath.Join(input, "objects", "obj-2.pb.json"), "Page", map[string]any{
 		"id":   "obj-2",
@@ -72,13 +82,15 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	})
 
 	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
-		"id":               "obj-1",
-		"name":             "Task One",
-		"related":          []any{"obj-2"},
-		"status":           []any{"opt-status-doing"},
-		"tag":              []any{"opt-tag-go", "opt-tag-export"},
-		"backlinks":        []any{"obj-2"},
-		"lastModifiedDate": 1730000000,
+		"id":                       "obj-1",
+		"name":                     "Task One",
+		"related":                  []any{"obj-2"},
+		"status":                   []any{"opt-status-doing"},
+		"65edf2aa8efc1e005b0cb9d2": []any{"opt-task-type-bug"},
+		"abcdefabcdefabcdefabcdef": []any{"opt-status-doing"},
+		"tag":                      []any{"opt-tag-go", "opt-tag-export"},
+		"backlinks":                []any{"obj-2"},
+		"lastModifiedDate":         1730000000,
 	}, []map[string]any{
 		{"id": "obj-1", "childrenIds": []string{"title"}},
 		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
@@ -103,8 +115,14 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 	if !strings.Contains(note, "status: \"Doing\"") {
 		t.Fatalf("expected status option to be resolved, got:\n%s", note)
 	}
+	if !strings.Contains(note, "Task Type: \"Bug\"") {
+		t.Fatalf("expected relation-id property to render readable key and option value, got:\n%s", note)
+	}
 	if !strings.Contains(note, "tag:") || !strings.Contains(note, "- \"go\"") || !strings.Contains(note, "- \"export\"") {
 		t.Fatalf("expected multi tag values, got:\n%s", note)
+	}
+	if strings.Contains(note, "abcdefabcdefabcdefabcdef:") {
+		t.Fatalf("expected unresolved archived-style property to be excluded by default, got:\n%s", note)
 	}
 	if strings.Contains(note, "backlinks:") {
 		t.Fatalf("expected backlinks to be excluded by default, got:\n%s", note)
@@ -115,6 +133,41 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(output, "_anytype", "raw", "obj-1.json")); err != nil {
 		t.Fatalf("expected raw sidecar: %v", err)
+	}
+}
+
+func TestExporterIncludesArchivedPropertiesWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":                       "obj-1",
+		"name":                     "Task One",
+		"abcdefabcdefabcdefabcdef": []any{"opt-status-doing"},
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, IncludeArchivedProperties: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "task-one.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "abcdefabcdefabcdefabcdef:") {
+		t.Fatalf("expected unresolved archived-style property to be included when enabled, got:\n%s", note)
 	}
 }
 

@@ -13,9 +13,10 @@ import (
 )
 
 type Exporter struct {
-	InputDir                 string
-	OutputDir                string
-	IncludeDynamicProperties bool
+	InputDir                  string
+	OutputDir                 string
+	IncludeDynamicProperties  bool
+	IncludeArchivedProperties bool
 }
 
 type Stats struct {
@@ -77,6 +78,7 @@ type layoutBlock struct {
 }
 
 type relationDef struct {
+	ID     string
 	Key    string
 	Name   string
 	Format int
@@ -181,7 +183,7 @@ func (e Exporter) Run() (Stats, error) {
 			return Stats{}, err
 		}
 
-		fm := renderFrontmatter(obj, relations, optionsByID, notePathByID, fileObjects, e.IncludeDynamicProperties)
+		fm := renderFrontmatter(obj, relations, optionsByID, notePathByID, fileObjects, e.IncludeDynamicProperties, e.IncludeArchivedProperties)
 		body := renderBody(obj, idToObject, notePathByID, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
@@ -255,14 +257,22 @@ func readRelations(dir string) (map[string]relationDef, error) {
 		if err != nil {
 			return nil, err
 		}
+		id := asString(f.Snapshot.Data.Details["id"])
 		key := asString(f.Snapshot.Data.Details["relationKey"])
-		if key == "" {
+		if key == "" && id == "" {
 			continue
 		}
-		out[key] = relationDef{
+		def := relationDef{
+			ID:     id,
 			Key:    key,
 			Name:   asString(f.Snapshot.Data.Details["name"]),
 			Format: asInt(f.Snapshot.Data.Details["relationFormat"]),
+		}
+		if key != "" {
+			out[key] = def
+		}
+		if id != "" {
+			out[id] = def
 		}
 	}
 	return out, nil
@@ -339,7 +349,7 @@ func readSnapshot(path string) (snapshotFile, error) {
 	return s, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool) string {
 	keys := make([]string, 0, len(obj.Details))
 	for k := range obj.Details {
 		keys = append(keys, k)
@@ -352,19 +362,62 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, options
 	writeYAMLString(&buf, obj.ID)
 	buf.WriteString("\n")
 
+	usedKeys := map[string]struct{}{"anytype_id": {}}
 	for _, k := range keys {
 		if !includeDynamicProperties {
 			if _, dynamic := dynamicPropertyKeys[k]; dynamic {
 				continue
 			}
 		}
+		rel, hasRel := relations[k]
+		if !includeArchivedProperties && shouldSkipUnnamedProperty(k, rel, hasRel) {
+			continue
+		}
 		v := obj.Details[k]
 		converted := convertPropertyValue(k, v, relations, optionsByID, notes, fileObjects)
-		writeYAMLKeyValue(&buf, k, converted)
+		outKey := frontmatterKey(k, rel, hasRel)
+		if _, exists := usedKeys[outKey]; exists {
+			outKey = k
+		}
+		usedKeys[outKey] = struct{}{}
+		writeYAMLKeyValue(&buf, outKey, converted)
 	}
 
 	buf.WriteString("---\n\n")
 	return buf.String()
+}
+
+func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
+	if !hasRel {
+		return rawKey
+	}
+	if rel.Name == "" {
+		return rawKey
+	}
+	if rel.Key != "" && rawKey != rel.Key {
+		return rel.Name
+	}
+	return rawKey
+}
+
+func shouldSkipUnnamedProperty(key string, rel relationDef, hasRel bool) bool {
+	if hasRel {
+		return strings.TrimSpace(rel.Name) == ""
+	}
+	return isLikelyAnytypeObjectID(key)
+}
+
+func isLikelyAnytypeObjectID(s string) bool {
+	if len(s) < 16 {
+		return false
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, fileObjects map[string]string) any {
