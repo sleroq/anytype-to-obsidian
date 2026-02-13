@@ -42,8 +42,3 @@ Run tests:
 ```bash
 go test ./...
 ```
-
-## Notes
-
-- MVP is plugin-free (no Dataview requirement).
-- Dataview/Bases-oriented output can be added later as an optional mode.
