@@ -48,6 +48,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - file object id -> source file path
 
 2. Property conversion
+   - Some object details keys use relation object IDs instead of `relationKey`; resolve via relation index before filtering/mapping.
    - `object` relation format: render note links when possible.
    - `tag` / `status`: map option IDs to option names.
    - `file`: map file object IDs to `files/<name>`.
