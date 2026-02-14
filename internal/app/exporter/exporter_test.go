@@ -1623,6 +1623,115 @@ func TestExporterIgnoresPrettierFailure(t *testing.T) {
 	}
 }
 
+func TestExporterWritesIconizeDataFromEmojiAndImageIcons(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	if err := os.WriteFile(filepath.Join(input, "files", "icon-image.bin"), []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, 0o644); err != nil {
+		t.Fatalf("write icon image file: %v", err)
+	}
+
+	writePBJSON(t, filepath.Join(input, "filesObjects", "icon-file-1.pb.json"), "FileObject", map[string]any{
+		"id":     "icon-file-1",
+		"name":   "icon-image",
+		"source": "files/icon-image.bin",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-emoji.pb.json"), "Page", map[string]any{
+		"id":        "obj-emoji",
+		"name":      "Emoji Note",
+		"iconEmoji": "📡",
+	}, []map[string]any{
+		{"id": "obj-emoji", "childrenIds": []string{"title-emoji"}},
+		{"id": "title-emoji", "text": map[string]any{"text": "Emoji Note", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-image.pb.json"), "Page", map[string]any{
+		"id":        "obj-image",
+		"name":      "Image Note",
+		"iconImage": "icon-file-1",
+	}, []map[string]any{
+		{"id": "obj-image", "childrenIds": []string{"title-image"}},
+		{"id": "title-image", "text": map[string]any{"text": "Image Note", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	dataPath := filepath.Join(output, ".obsidian", "plugins", "obsidian-icon-folder", "data.json")
+	dataBytes, err := os.ReadFile(dataPath)
+	if err != nil {
+		t.Fatalf("read iconize data: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("decode iconize data: %v", err)
+	}
+
+	if got := asString(data["notes/Emoji Note.md"]); got != "📡" {
+		t.Fatalf("expected emoji icon mapping, got %q", got)
+	}
+
+	imageIconValue := asString(data["notes/Image Note.md"])
+	if !strings.HasPrefix(imageIconValue, iconizeAnytypePackPrefix+"AnytypeIcon") {
+		t.Fatalf("expected generated icon pack reference for image icon, got %q", imageIconValue)
+	}
+
+	if _, ok := data["settings"].(map[string]any); !ok {
+		t.Fatalf("expected iconize settings to be present in data.json")
+	}
+
+	iconName := strings.TrimPrefix(imageIconValue, iconizeAnytypePackPrefix)
+	iconSVGPath := filepath.Join(output, ".obsidian", "icons", iconizeAnytypePackName, iconName+".svg")
+	iconSVG, err := os.ReadFile(iconSVGPath)
+	if err != nil {
+		t.Fatalf("read generated icon svg: %v", err)
+	}
+	iconSVGContent := string(iconSVG)
+	if !strings.Contains(iconSVGContent, "<svg") || !strings.Contains(iconSVGContent, "data:image/") {
+		t.Fatalf("expected generated icon svg to embed image data, got:\n%s", iconSVGContent)
+	}
+}
+
+func TestExporterCanDisableIconizeIntegration(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	prepareMinimalExportFixture(t, input)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-icon.pb.json"), "Page", map[string]any{
+		"id":        "obj-icon",
+		"name":      "Icon Note",
+		"iconEmoji": "✅",
+	}, []map[string]any{
+		{"id": "obj-icon", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Icon Note", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, DisableIconizeIcons: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, ".obsidian", "plugins", "obsidian-icon-folder", "data.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected iconize data.json to not exist when integration is disabled, got: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, ".obsidian", "icons", iconizeAnytypePackName)); !os.IsNotExist(err) {
+		t.Fatalf("expected icon pack directory to not exist when integration is disabled, got: %v", err)
+	}
+}
+
 func prepareMinimalExportFixture(t *testing.T, input string) {
 	t.Helper()
 	mustMkdirAll(t, filepath.Join(input, "objects"))

@@ -2,9 +2,13 @@ package exporter
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +28,7 @@ import (
 type Exporter struct {
 	InputDir                  string
 	OutputDir                 string
+	DisableIconizeIcons       bool
 	RunPrettier               bool
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
@@ -488,6 +493,12 @@ Can I delete this folder?
 			return Stats{}, err
 		}
 		progressBar.Advance("exporting notes")
+	}
+
+	if !e.DisableIconizeIcons {
+		if err := exportIconizePluginData(e.InputDir, e.OutputDir, allObjects, notePathByID, fileObjects); err != nil {
+			return Stats{}, fmt.Errorf("export iconize plugin data: %w", err)
+		}
 	}
 
 	idx := indexFile{Notes: notePathByID}
@@ -2829,4 +2840,176 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+const iconizeAnytypePackName = "anytype"
+const iconizeAnytypePackPrefix = "An"
+
+func exportIconizePluginData(inputDir string, outputDir string, objects []objectInfo, notePathByID map[string]string, fileObjects map[string]string) error {
+	iconByPath := make(map[string]string)
+	imageIconRefs := make(map[string]string)
+
+	for _, obj := range objects {
+		noteRelPath := strings.TrimSpace(notePathByID[obj.ID])
+		if noteRelPath == "" {
+			continue
+		}
+
+		iconValue := strings.TrimSpace(asString(obj.Details["iconEmoji"]))
+		if iconValue == "" {
+			imageID := strings.TrimSpace(asString(obj.Details["iconImage"]))
+			if imageID != "" {
+				imageIcon, err := ensureIconizeImageIcon(inputDir, outputDir, imageID, fileObjects, imageIconRefs)
+				if err != nil {
+					return err
+				}
+				iconValue = imageIcon
+			}
+		}
+
+		if iconValue == "" {
+			continue
+		}
+		iconByPath[noteRelPath] = iconValue
+	}
+
+	if len(iconByPath) == 0 {
+		return nil
+	}
+
+	dataPath := filepath.Join(outputDir, ".obsidian", "plugins", "obsidian-icon-folder", "data.json")
+	if err := os.MkdirAll(filepath.Dir(dataPath), 0o755); err != nil {
+		return err
+	}
+
+	data := map[string]any{}
+	if raw, err := os.ReadFile(dataPath); err == nil {
+		if err := json.Unmarshal(raw, &data); err != nil {
+			return fmt.Errorf("decode %s: %w", dataPath, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if _, ok := data["settings"]; !ok {
+		data["settings"] = defaultIconizeSettings()
+	}
+
+	for notePath, iconName := range iconByPath {
+		data[notePath] = iconName
+	}
+
+	encoded, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(dataPath, encoded, 0o644)
+}
+
+func ensureIconizeImageIcon(inputDir string, outputDir string, imageID string, fileObjects map[string]string, refs map[string]string) (string, error) {
+	if existing := strings.TrimSpace(refs[imageID]); existing != "" {
+		return existing, nil
+	}
+
+	sourceRelPath := strings.TrimSpace(fileObjects[imageID])
+	if sourceRelPath == "" {
+		return "", nil
+	}
+
+	absoluteSourcePath := filepath.Join(inputDir, filepath.FromSlash(sourceRelPath))
+	content, err := os.ReadFile(absoluteSourcePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if len(content) == 0 {
+		return "", nil
+	}
+
+	iconDir := filepath.Join(outputDir, ".obsidian", "icons", iconizeAnytypePackName)
+	if err := os.MkdirAll(iconDir, 0o755); err != nil {
+		return "", err
+	}
+
+	iconName := iconizeImageIconName(imageID)
+	iconSVG := wrapBinaryImageAsSVG(content, detectImageMIME(content, absoluteSourcePath))
+	if err := os.WriteFile(filepath.Join(iconDir, iconName+".svg"), []byte(iconSVG), 0o644); err != nil {
+		return "", err
+	}
+
+	iconRef := iconizeAnytypePackPrefix + iconName
+	refs[imageID] = iconRef
+	return iconRef, nil
+}
+
+func iconizeImageIconName(imageID string) string {
+	hash := sha1.Sum([]byte(strings.TrimSpace(imageID)))
+	encoded := strings.ToUpper(hex.EncodeToString(hash[:4]))
+	return "AnytypeIcon" + encoded
+}
+
+func detectImageMIME(content []byte, sourcePath string) string {
+	if len(content) > 0 {
+		sniffLen := len(content)
+		if sniffLen > 512 {
+			sniffLen = 512
+		}
+		mime := strings.TrimSpace(http.DetectContentType(content[:sniffLen]))
+		if mime != "" && mime != "application/octet-stream" {
+			return mime
+		}
+	}
+
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(sourcePath), "."))
+	switch ext {
+	case "svg":
+		return "image/svg+xml"
+	case "ico":
+		return "image/x-icon"
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "webp":
+		return "image/webp"
+	case "gif":
+		return "image/gif"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func wrapBinaryImageAsSVG(content []byte, mimeType string) string {
+	encoded := base64.StdEncoding.EncodeToString(content)
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><image href="data:%s;base64,%s" width="48" height="48" preserveAspectRatio="xMidYMid meet" /></svg>`, mimeType, encoded)
+}
+
+func defaultIconizeSettings() map[string]any {
+	return map[string]any{
+		"migrated":                        6,
+		"iconPacksPath":                   ".obsidian/icons",
+		"fontSize":                        16,
+		"emojiStyle":                      "native",
+		"iconColor":                       nil,
+		"recentlyUsedIcons":               []string{},
+		"recentlyUsedIconsSize":           5,
+		"rules":                           []any{},
+		"extraMargin":                     map[string]any{"top": 0, "right": 4, "bottom": 0, "left": 0},
+		"iconInTabsEnabled":               false,
+		"iconInTitleEnabled":              false,
+		"iconInTitlePosition":             "above",
+		"iconInFrontmatterEnabled":        false,
+		"iconInFrontmatterFieldName":      "icon",
+		"iconColorInFrontmatterFieldName": "iconColor",
+		"iconsBackgroundCheckEnabled":     false,
+		"iconsInNotesEnabled":             true,
+		"iconsInLinksEnabled":             true,
+		"iconIdentifier":                  ":",
+		"lucideIconPackType":              "native",
+		"debugMode":                       false,
+		"useInternalPlugins":              false,
+	}
 }
