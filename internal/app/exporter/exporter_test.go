@@ -1118,6 +1118,164 @@ func TestAnytypeTimestampsPrefersCreatedForAccessAndModifiedForWrite(t *testing.
 	}
 }
 
+func TestExporterInfersNoteFileNameFromTitleThenDetailsThenID(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-block.pb.json"), "Page", map[string]any{
+		"id": "obj-block",
+	}, []map[string]any{
+		{"id": "obj-block", "childrenIds": []string{"title-block"}},
+		{"id": "title-block", "text": map[string]any{"text": "From Title Block", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-details.pb.json"), "Page", map[string]any{
+		"id":    "obj-details",
+		"title": "From Details Title",
+	}, []map[string]any{
+		{"id": "obj-details", "childrenIds": []string{"paragraph"}},
+		{"id": "paragraph", "text": map[string]any{"text": "body", "style": "Paragraph"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-fallback.pb.json"), "Page", map[string]any{
+		"id": "obj-fallback",
+	}, []map[string]any{{"id": "obj-fallback", "childrenIds": []string{}}})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "notes", "From Title Block.md")); err != nil {
+		t.Fatalf("expected title-block fallback filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "From Details Title.md")); err != nil {
+		t.Fatalf("expected details.title fallback filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "obj-fallback.md")); err != nil {
+		t.Fatalf("expected object-id fallback filename: %v", err)
+	}
+}
+
+func TestExporterResetsNumberedListAfterNonNumberedSiblingAndUsesTabIndent(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "list-page.pb.json"), "Page", map[string]any{
+		"id":   "list-page",
+		"name": "List Page",
+	}, []map[string]any{
+		{"id": "list-page", "childrenIds": []string{"title", "num-1", "paragraph", "num-2", "num-3", "num-parent"}},
+		{"id": "title", "text": map[string]any{"text": "List Page", "style": "Title"}},
+		{"id": "num-1", "text": map[string]any{"text": "first", "style": "Numbered"}},
+		{"id": "paragraph", "text": map[string]any{"text": "break", "style": "Paragraph"}},
+		{"id": "num-2", "text": map[string]any{"text": "second", "style": "Numbered"}},
+		{"id": "num-3", "text": map[string]any{"text": "third", "style": "Numbered"}},
+		{"id": "num-parent", "text": map[string]any{"text": "parent", "style": "Numbered"}, "childrenIds": []string{"num-child"}},
+		{"id": "num-child", "text": map[string]any{"text": "nested", "style": "Numbered"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "List Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	if !strings.Contains(note, "1. first\nbreak\n1. second\n2. third") {
+		t.Fatalf("expected numbering reset after paragraph break, got:\n%s", note)
+	}
+	if !strings.Contains(note, "3. parent\n1. nested") {
+		t.Fatalf("expected nested numbered item to keep independent numbering, got:\n%s", note)
+	}
+}
+
+func TestExporterBuildsFilePathFromFileObjectWhenSourceIsMissing(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	if err := os.WriteFile(filepath.Join(input, "files", "Report.pdf"), []byte("pdf"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	writePBJSON(t, filepath.Join(input, "filesObjects", "file-1.pb.json"), "FileObject", map[string]any{
+		"id":      "file-1",
+		"name":    "Report",
+		"fileExt": "pdf",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "file-page.pb.json"), "Page", map[string]any{
+		"id":   "file-page",
+		"name": "File Page",
+	}, []map[string]any{
+		{"id": "file-page", "childrenIds": []string{"title", "file-block"}},
+		{"id": "title", "text": map[string]any{"text": "File Page", "style": "Title"}},
+		{"id": "file-block", "file": map[string]any{"name": "Report.pdf", "type": "File", "targetObjectId": "file-1"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "File Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "[Report.pdf](files/Report.pdf)") {
+		t.Fatalf("expected file link to use synthesized files path, got:\n%s", note)
+	}
+}
+
+func TestDateFormattingAndTimestampFallbackVariants(t *testing.T) {
+	if got := formatDateValue("2026-02-01T09:10:11+03:00"); got != "2026-02-01" {
+		t.Fatalf("expected RFC3339 date formatting, got %#v", got)
+	}
+	if got := formatDateValue("2026-02-02"); got != "2026-02-02" {
+		t.Fatalf("expected date-string passthrough formatting, got %#v", got)
+	}
+	if got := formatDateValue("not-a-date"); got != "not-a-date" {
+		t.Fatalf("expected invalid date value to be preserved, got %#v", got)
+	}
+
+	atime, mtime, ok := anytypeTimestamps(map[string]any{"changedDate": "1700001000000"})
+	if !ok {
+		t.Fatalf("expected changedDate-only details to produce file timestamps")
+	}
+	if atime.UTC().Unix() != 1700001000 {
+		t.Fatalf("expected atime fallback to changedDate, got %d", atime.UTC().Unix())
+	}
+	if mtime.UTC().Unix() != 1700001000 {
+		t.Fatalf("expected mtime fallback to changedDate, got %d", mtime.UTC().Unix())
+	}
+}
+
 func writePBJSON(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any) {
 	t.Helper()
 	if blocks == nil {
