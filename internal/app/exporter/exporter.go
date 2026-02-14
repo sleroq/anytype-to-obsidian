@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -284,6 +285,7 @@ func (e Exporter) Run() (Stats, error) {
 	rawDir := filepath.Join(e.OutputDir, "_anytype", "raw")
 	templateDir := filepath.Join(e.OutputDir, "templates")
 	baseDir := filepath.Join(e.OutputDir, "bases")
+	excalidrawDir := filepath.Join(e.OutputDir, "Excalidraw")
 	if err := os.MkdirAll(noteDir, 0o755); err != nil {
 		return Stats{}, err
 	}
@@ -291,6 +293,9 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, err
 	}
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return Stats{}, err
+	}
+	if err := os.MkdirAll(excalidrawDir, 0o755); err != nil {
 		return Stats{}, err
 	}
 	if err := os.MkdirAll(rawDir, 0o755); err != nil {
@@ -319,6 +324,9 @@ Can I delete this folder?
 
 	copiedFiles, err := copyDir(filepath.Join(e.InputDir, "files"), filepath.Join(e.OutputDir, "files"))
 	if err != nil {
+		return Stats{}, err
+	}
+	if err := normalizeExportedFileObjectPaths(e.InputDir, e.OutputDir, fileObjects); err != nil {
 		return Stats{}, err
 	}
 
@@ -411,6 +419,8 @@ Can I delete this folder?
 		optionNamesByID[id] = option.Name
 	}
 
+	usedExcalidrawNames := map[string]int{}
+
 	usedBaseNames := map[string]int{}
 	for _, obj := range objects {
 		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects, !e.DisablePictureToCover)
@@ -462,6 +472,11 @@ Can I delete this folder?
 			return Stats{}, err
 		}
 
+		excalidrawEmbeds, err := exportExcalidrawDrawings(obj, noteRelPath, excalidrawDir, filenameEscaping, usedExcalidrawNames)
+		if err != nil {
+			return Stats{}, fmt.Errorf("export excalidraw %s: %w", obj.ID, err)
+		}
+
 		fm := renderFrontmatter(
 			obj,
 			relations,
@@ -476,7 +491,7 @@ Can I delete this folder?
 			filters,
 			!e.DisablePictureToCover,
 		)
-		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects)
+		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects, excalidrawEmbeds)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
 		}
@@ -1219,7 +1234,7 @@ func parseAnytypeTimestamp(value any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, sourceNotePath string, fileObjects map[string]string) string {
+func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, sourceNotePath string, fileObjects map[string]string, excalidrawEmbeds map[string]string) string {
 	byID := make(map[string]block, len(obj.Blocks))
 	for _, b := range obj.Blocks {
 		byID[b.ID] = b
@@ -1240,11 +1255,11 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 	}
 
 	var buf bytes.Buffer
-	renderChildren(&buf, byID, children, notes, sourceNotePath, fileObjects, 0, obj.ID)
+	renderChildren(&buf, byID, children, notes, sourceNotePath, fileObjects, excalidrawEmbeds, 0, obj.ID)
 	return strings.TrimLeft(buf.String(), "\n")
 }
 
-func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string) {
+func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, excalidrawEmbeds map[string]string, depth int, rootID string) {
 	numberedIndex := 0
 	for _, id := range children {
 		b, ok := byID[id]
@@ -1253,7 +1268,7 @@ func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string,
 		} else {
 			numberedIndex = 0
 		}
-		renderBlock(buf, byID, id, notes, sourceNotePath, fileObjects, depth, rootID, numberedIndex)
+		renderBlock(buf, byID, id, notes, sourceNotePath, fileObjects, excalidrawEmbeds, depth, rootID, numberedIndex)
 	}
 }
 
@@ -1286,7 +1301,7 @@ func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesBy
 	}
 	buf.WriteString("---\n\n")
 
-	body := renderBody(objectInfo{ID: tmpl.ID, Name: tmpl.Name, Details: tmpl.Details, Blocks: tmpl.Blocks}, objects, notes, "", fileObjects)
+	body := renderBody(objectInfo{ID: tmpl.ID, Name: tmpl.Name, Details: tmpl.Details, Blocks: tmpl.Blocks}, objects, notes, "", fileObjects, nil)
 	buf.WriteString(body)
 	return buf.String()
 }
@@ -2067,7 +2082,7 @@ func collectTemplateRelationKeys(tmpl templateInfo) []string {
 	return ordered
 }
 
-func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string, numberedIndex int) {
+func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, excalidrawEmbeds map[string]string, depth int, rootID string, numberedIndex int) {
 	b, ok := byID[id]
 	if !ok {
 		return
@@ -2078,7 +2093,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	}
 
 	if b.Text != nil && (b.Text.Style == "Callout" || b.Text.Style == "Toggle") {
-		renderCalloutBlock(buf, byID, b, notes, sourceNotePath, fileObjects, depth, rootID)
+		renderCalloutBlock(buf, byID, b, notes, sourceNotePath, fileObjects, excalidrawEmbeds, depth, rootID)
 		return
 	}
 
@@ -2114,7 +2129,9 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 			buf.WriteString("[" + escapeBrackets(title) + "](" + b.Bookmark.URL + ")\n")
 		}
 	} else if b.Latex != nil {
-		if strings.TrimSpace(b.Latex.Text) != "" {
+		if embedTarget, ok := excalidrawEmbeds[b.ID]; ok && embedTarget != "" {
+			buf.WriteString("![[" + embedTarget + "]]\n")
+		} else if strings.TrimSpace(b.Latex.Text) != "" {
 			buf.WriteString("$$\n" + b.Latex.Text + "\n$$\n")
 		}
 	} else if b.Link != nil {
@@ -2143,7 +2160,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		}
 	}
 
-	renderChildren(buf, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, depth+1, rootID)
+	renderChildren(buf, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, excalidrawEmbeds, depth+1, rootID)
 }
 
 func isSystemTitleBlock(b block) bool {
@@ -2263,7 +2280,7 @@ func applyTextMarks(text string, marks *anytypedomain.TextMarks, notes map[strin
 	return out.String()
 }
 
-func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string) {
+func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes map[string]string, sourceNotePath string, fileObjects map[string]string, excalidrawEmbeds map[string]string, depth int, rootID string) {
 	if b.Text == nil {
 		return
 	}
@@ -2278,13 +2295,140 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 	buf.WriteString(marker + "\n")
 
 	var child bytes.Buffer
-	renderChildren(&child, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, depth+1, rootID)
+	renderChildren(&child, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, excalidrawEmbeds, depth+1, rootID)
 	body := strings.TrimRight(child.String(), "\n")
 	if body == "" {
 		return
 	}
 	buf.WriteString(prefixLines(body, "> "))
 	buf.WriteString("\n\n")
+}
+
+func exportExcalidrawDrawings(obj objectInfo, noteRelPath string, excalidrawDir string, filenameEscaping string, usedNames map[string]int) (map[string]string, error) {
+	embeds := map[string]string{}
+	noteBase := strings.TrimSpace(strings.TrimSuffix(filepath.Base(noteRelPath), filepath.Ext(noteRelPath)))
+	if noteBase == "" {
+		noteBase = sanitizeName(obj.ID, filenameEscaping)
+	}
+	drawingIndex := 0
+
+	for _, b := range obj.Blocks {
+		if b.Latex == nil {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(b.Latex.Processor), "Excalidraw") {
+			continue
+		}
+		drawingData := strings.TrimSpace(b.Latex.Text)
+		if drawingData == "" {
+			continue
+		}
+
+		drawingContent, err := renderExcalidrawFile(drawingData)
+		if err != nil {
+			continue
+		}
+
+		drawingIndex++
+		baseName := sanitizeName(noteBase+" drawing", filenameEscaping)
+		if baseName == "" {
+			baseName = sanitizeName(obj.ID+" drawing", filenameEscaping)
+		}
+		if baseName == "" {
+			baseName = "drawing"
+		}
+		if drawingIndex > 1 {
+			baseName = baseName + "-" + strconv.Itoa(drawingIndex)
+		}
+
+		usedKey := filenameCollisionKey(baseName, filenameEscaping)
+		n := usedNames[usedKey]
+		usedNames[usedKey] = n + 1
+		if n > 0 {
+			baseName = baseName + "-" + strconv.Itoa(n+1)
+		}
+
+		drawingFilename := baseName + ".excalidraw.md"
+		drawingPath := filepath.Join(excalidrawDir, drawingFilename)
+		if err := os.WriteFile(drawingPath, []byte(drawingContent), 0o644); err != nil {
+			return nil, err
+		}
+		if err := applyExportedFileTimes(drawingPath, obj.Details); err != nil {
+			return nil, err
+		}
+
+		embeds[b.ID] = filepath.ToSlash(filepath.Join("Excalidraw", strings.TrimSuffix(drawingFilename, ".md")))
+	}
+
+	if len(embeds) == 0 {
+		return nil, nil
+	}
+	return embeds, nil
+}
+
+func renderExcalidrawFile(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("empty excalidraw payload")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", err
+	}
+	normalizeExcalidrawPayload(payload)
+	pretty, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("---\n\n")
+	buf.WriteString("excalidraw-plugin: parsed\n")
+	buf.WriteString("tags: [excalidraw]\n\n")
+	buf.WriteString("---\n")
+	buf.WriteString("==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'\n\n")
+	buf.WriteString("# Excalidraw Data\n\n")
+	buf.WriteString("## Text Elements\n")
+	buf.WriteString("%%\n")
+	buf.WriteString("## Drawing\n")
+	buf.WriteString("```json\n")
+	buf.Write(pretty)
+	buf.WriteString("\n```\n")
+	buf.WriteString("%%\n")
+
+	return buf.String(), nil
+}
+
+func normalizeExcalidrawPayload(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+
+	if _, ok := payload["type"]; !ok {
+		payload["type"] = "excalidraw"
+	}
+	if _, ok := payload["version"]; !ok {
+		payload["version"] = float64(2)
+	}
+	if _, ok := payload["source"]; !ok {
+		payload["source"] = "https://excalidraw.com"
+	}
+
+	if _, ok := payload["elements"].([]any); !ok {
+		payload["elements"] = []any{}
+	}
+	if _, ok := payload["files"].(map[string]any); !ok {
+		payload["files"] = map[string]any{}
+	}
+
+	appState, ok := payload["appState"].(map[string]any)
+	if !ok {
+		appState = map[string]any{}
+		payload["appState"] = appState
+	}
+	if _, ok := appState["collaborators"].([]any); !ok {
+		appState["collaborators"] = []any{}
+	}
 }
 
 func prefixLines(s string, prefix string) string {
@@ -2883,6 +3027,98 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func normalizeExportedFileObjectPaths(inputDir, outputDir string, fileObjects map[string]string) error {
+	rewrittenPaths := map[string]string{}
+	for _, sourceRelPath := range fileObjects {
+		sourceRelPath = filepath.ToSlash(strings.TrimSpace(sourceRelPath))
+		if sourceRelPath == "" || filepath.Ext(sourceRelPath) != "" {
+			continue
+		}
+		if _, seen := rewrittenPaths[sourceRelPath]; seen {
+			continue
+		}
+
+		ext := detectFileExtensionFromContent(filepath.Join(inputDir, filepath.FromSlash(sourceRelPath)))
+		if ext == "" {
+			continue
+		}
+		rewrittenPaths[sourceRelPath] = sourceRelPath + ext
+	}
+
+	for sourceRelPath, rewrittenRelPath := range rewrittenPaths {
+		sourceAbsPath := filepath.Join(outputDir, filepath.FromSlash(sourceRelPath))
+		rewrittenAbsPath := filepath.Join(outputDir, filepath.FromSlash(rewrittenRelPath))
+
+		if _, err := os.Stat(sourceAbsPath); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat copied file %s: %w", sourceRelPath, err)
+		}
+		if _, err := os.Stat(rewrittenAbsPath); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat rewritten file %s: %w", rewrittenRelPath, err)
+		}
+
+		if err := os.Rename(sourceAbsPath, rewrittenAbsPath); err != nil {
+			return fmt.Errorf("rename copied file %s -> %s: %w", sourceRelPath, rewrittenRelPath, err)
+		}
+	}
+
+	for objectID, relPath := range fileObjects {
+		relPath = filepath.ToSlash(strings.TrimSpace(relPath))
+		if rewrittenRelPath, ok := rewrittenPaths[relPath]; ok {
+			fileObjects[objectID] = rewrittenRelPath
+		}
+	}
+
+	return nil
+}
+
+func detectFileExtensionFromContent(path string) string {
+	content, err := os.ReadFile(path)
+	if err != nil || len(content) == 0 {
+		return ""
+	}
+
+	sniffLen := len(content)
+	if sniffLen > 512 {
+		sniffLen = 512
+	}
+
+	mimeType := strings.TrimSpace(http.DetectContentType(content[:sniffLen]))
+	if idx := strings.Index(mimeType, ";"); idx >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:idx])
+	}
+	mimeType = strings.ToLower(mimeType)
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		return ""
+	}
+
+	preferredExt := map[string]string{
+		"image/jpeg":       ".jpg",
+		"image/png":        ".png",
+		"image/gif":        ".gif",
+		"image/webp":       ".webp",
+		"image/svg+xml":    ".svg",
+		"image/x-icon":     ".ico",
+		"application/pdf":  ".pdf",
+		"application/json": ".json",
+		"text/plain":       ".txt",
+	}
+	if ext, ok := preferredExt[mimeType]; ok {
+		return ext
+	}
+
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err != nil || len(exts) == 0 {
+		return ""
+	}
+	sort.Strings(exts)
+	return exts[0]
 }
 
 const iconizeAnytypePackName = "anytype"

@@ -5,13 +5,11 @@ Convert Anytype JSON Export into Obsidian Markdown with relations and metadata p
 ## Features
 
 - Relations are exported correctly (object links, tags, statuses, files, types, multi-selects).
+- All of Anytype blocks are supported.
 - Anytype queries/dataviews are converted into Obsidian Bases (`.base`) files.
-- Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
+- Integration with Pretty Properties and Iconize obsidian plugins. Compatible properties are converted and renamed.
 - Select-like values (for example `tag`, `status`, `type`) can be exported as linked objects/notes when needed.
-- Pretty Properties plugin integration. Compatible properties are converted and renamed.
-- Anytype templates are exported.
-- Iconize plugin integration: `iconEmoji`/`iconImage` are exported to `.obsidian/plugins/obsidian-icon-folder/data.json` (with generated icon pack files for image icons).
-- Anytype -> Obsidian block conversion is fully supported in this project scope; if you find an unsupported block, please open an issue.
+- Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
 
 ## Quick start
 

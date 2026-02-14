@@ -716,6 +716,87 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	}
 }
 
+func TestExporterExtractsExcalidrawToDedicatedFolderAndEmbedsIt(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "excalidraw-page.pb.json"), "Page", map[string]any{
+		"id":   "excalidraw-page",
+		"name": "Excalidraw Page",
+	}, []map[string]any{
+		{"id": "excalidraw-page", "childrenIds": []string{"title", "intro", "drawing"}},
+		{"id": "title", "text": map[string]any{"text": "Excalidraw Page", "style": "Title"}},
+		{"id": "intro", "text": map[string]any{"text": "embedded drawing:", "style": "Paragraph"}},
+		{"id": "drawing", "latex": map[string]any{
+			"processor": "Excalidraw",
+			"text":      "{\"type\":\"excalidraw\",\"version\":2,\"source\":\"https://excalidraw.com\",\"elements\":[],\"appState\":{\"gridSize\":null},\"files\":{}}",
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Excalidraw Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "![[Excalidraw/Excalidraw Page drawing.excalidraw]]") {
+		t.Fatalf("expected excalidraw embed in note, got:\n%s", note)
+	}
+	if strings.Contains(note, "$$") {
+		t.Fatalf("expected excalidraw block to avoid latex output, got:\n%s", note)
+	}
+
+	drawingPath := filepath.Join(output, "Excalidraw", "Excalidraw Page drawing.excalidraw.md")
+	drawingBytes, err := os.ReadFile(drawingPath)
+	if err != nil {
+		t.Fatalf("read excalidraw file: %v", err)
+	}
+	drawing := string(drawingBytes)
+	if !strings.Contains(drawing, "excalidraw-plugin: parsed") {
+		t.Fatalf("expected excalidraw metadata, got:\n%s", drawing)
+	}
+	if !strings.Contains(drawing, "Decompress current Excalidraw file") {
+		t.Fatalf("expected native plugin warning text, got:\n%s", drawing)
+	}
+	if !strings.Contains(drawing, "```json") {
+		t.Fatalf("expected json drawing payload, got:\n%s", drawing)
+	}
+
+	jsonStart := strings.Index(drawing, "```json\n")
+	if jsonStart < 0 {
+		t.Fatalf("missing json block in drawing:\n%s", drawing)
+	}
+	jsonStart += len("```json\n")
+	jsonEnd := strings.Index(drawing[jsonStart:], "\n```")
+	if jsonEnd < 0 {
+		t.Fatalf("missing json block terminator in drawing:\n%s", drawing)
+	}
+	payloadRaw := drawing[jsonStart : jsonStart+jsonEnd]
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadRaw), &payload); err != nil {
+		t.Fatalf("decode excalidraw payload: %v", err)
+	}
+	appState, ok := payload["appState"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected appState object, got %#v", payload["appState"])
+	}
+	if _, ok := appState["collaborators"].([]any); !ok {
+		t.Fatalf("expected appState.collaborators array, got %#v", appState["collaborators"])
+	}
+}
+
 func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -1530,6 +1611,59 @@ func TestExporterBuildsFilePathFromFileObjectWhenSourceIsMissing(t *testing.T) {
 	note := string(noteBytes)
 	if !strings.Contains(note, "[Report.pdf](../files/Report.pdf)") {
 		t.Fatalf("expected file link to use synthesized files path, got:\n%s", note)
+	}
+}
+
+func TestExporterAddsExtensionForSourceFileWithoutExtension(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	imageName := "anytype_downloaded_file_2178347794"
+	if err := os.WriteFile(filepath.Join(input, "files", imageName), []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00}, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	writePBJSON(t, filepath.Join(input, "filesObjects", "cover-file.pb.json"), "FileObject", map[string]any{
+		"id":     "cover-file",
+		"name":   imageName,
+		"source": "files/" + imageName,
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":      "obj-1",
+		"name":    "Page With Cover",
+		"coverId": "cover-file",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Page With Cover", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Page With Cover.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "banner: \"[["+imageName+".jpg]]\"") {
+		t.Fatalf("expected banner to reference detected jpg extension, got:\n%s", note)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "files", imageName+".jpg")); err != nil {
+		t.Fatalf("expected renamed file with extension to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "files", imageName)); !os.IsNotExist(err) {
+		t.Fatalf("expected original extensionless file to be renamed, got stat err: %v", err)
 	}
 }
 
