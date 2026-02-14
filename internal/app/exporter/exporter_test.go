@@ -1000,6 +1000,9 @@ func TestExporterGeneratesTemplatesFromTemplateBlocks(t *testing.T) {
 		t.Fatalf("read template: %v", err)
 	}
 	template := string(templateBytes)
+	if strings.Contains(template, "\n# Contact\n") || strings.Contains(template, "\n# \n") {
+		t.Fatalf("expected root title block to be skipped in template body, got:\n%s", template)
+	}
 	if !strings.Contains(template, "anytype_template_id: \"tmpl-1\"") {
 		t.Fatalf("expected template id frontmatter, got:\n%s", template)
 	}
@@ -1273,6 +1276,150 @@ func TestDateFormattingAndTimestampFallbackVariants(t *testing.T) {
 	}
 	if mtime.UTC().Unix() != 1700001000 {
 		t.Fatalf("expected mtime fallback to changedDate, got %d", mtime.UTC().Unix())
+	}
+}
+
+func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-created.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-created",
+		"relationKey":    "createdDate",
+		"relationFormat": 4,
+		"name":           "createdDate",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-modified.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-modified",
+		"relationKey":    "lastModifiedDate",
+		"relationFormat": 4,
+		"name":           "lastModifiedDate",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-status.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-status",
+		"relationKey":    "status",
+		"relationFormat": 3,
+		"name":           "Status",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-task-type.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-task-type",
+		"relationKey":    "65edf2aa8efc1e005b0cb9d2",
+		"relationFormat": 3,
+		"name":           "Task Type",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-task-type-focus.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-task-type-focus",
+		"name": "Focus",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-status-doing.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-status-doing",
+		"name": "Doing",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "query.pb.json"), "Page", map[string]any{
+		"id":   "query",
+		"name": "General Journal",
+	}, []map[string]any{
+		{"id": "query", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "General Journal", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{
+				map[string]any{
+					"id":   "view-1",
+					"type": "Kanban",
+					"name": "All",
+					"sorts": []any{
+						map[string]any{"RelationKey": "lastModifiedDate", "type": "Desc", "format": "date", "includeTime": true, "emptyPlacement": "NotSpecified", "noCollate": false},
+						map[string]any{"RelationKey": "createdDate", "type": "Desc", "format": "date", "includeTime": true, "emptyPlacement": "Start", "noCollate": true},
+						map[string]any{"RelationKey": "status", "type": "Custom", "customOrder": []any{"opt-status-doing"}, "format": "status", "includeTime": false, "emptyPlacement": "End", "noCollate": false},
+					},
+					"filters": []any{
+						map[string]any{"operator": "No", "RelationKey": "65edf2aa8efc1e005b0cb9d2", "condition": "In", "value": []any{"opt-task-type-focus"}, "format": "status", "includeTime": false},
+					},
+					"groupRelationKey": "status",
+					"pageLimit":        100,
+				},
+			},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	baseBytes, err := os.ReadFile(filepath.Join(output, "bases", "General Journal.base"))
+	if err != nil {
+		t.Fatalf("read base file: %v", err)
+	}
+	base := string(baseBytes)
+
+	if !strings.Contains(base, "views:") || !strings.Contains(base, "name: \"All\"") {
+		t.Fatalf("expected base views to be rendered, got:\n%s", base)
+	}
+	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.mtime\"") || !strings.Contains(base, "\"file.ctime\"") {
+		t.Fatalf("expected created/modified sorts mapped to file properties, got:\n%s", base)
+	}
+	if !strings.Contains(base, "groupBy:") || !strings.Contains(base, "\"note.status\"") {
+		t.Fatalf("expected groupBy to be rendered, got:\n%s", base)
+	}
+	if !strings.Contains(base, "Task Type") || !strings.Contains(base, "Focus") {
+		t.Fatalf("expected filter value and relation key mapping, got:\n%s", base)
+	}
+	if !strings.Contains(base, "direction: \"CUSTOM\"") || !strings.Contains(base, "customOrder:") || !strings.Contains(base, "\"Doing\"") {
+		t.Fatalf("expected custom sort metadata to be preserved, got:\n%s", base)
+	}
+}
+
+func TestBuildFilterExpressionSupportsAllAnytypeConditions(t *testing.T) {
+	relations := map[string]relationDef{
+		"status": {Key: "status", Name: "Status", Format: 3},
+	}
+	optionsByID := map[string]string{"opt-a": "A"}
+
+	conditions := []string{
+		"Equal",
+		"NotEqual",
+		"Greater",
+		"Less",
+		"GreaterOrEqual",
+		"LessOrEqual",
+		"Like",
+		"NotLike",
+		"In",
+		"NotIn",
+		"Empty",
+		"NotEmpty",
+		"AllIn",
+		"NotAllIn",
+		"ExactIn",
+		"NotExactIn",
+		"Exists",
+	}
+
+	for _, condition := range conditions {
+		value := any("opt-a")
+		switch condition {
+		case "In", "NotIn", "AllIn", "NotAllIn", "ExactIn", "NotExactIn":
+			value = []any{"opt-a"}
+		}
+		expr := buildFilterExpression(map[string]any{
+			"RelationKey": "status",
+			"condition":   condition,
+			"value":       value,
+			"format":      "status",
+		}, relations, optionsByID, nil, nil, nil)
+		if strings.TrimSpace(expr) == "" {
+			t.Fatalf("expected non-empty expression for condition %s", condition)
+		}
 	}
 }
 

@@ -74,6 +74,8 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - `tableOfContents` block -> generated markdown list of heading anchors.
    - template relation blocks (`blocks[*].relation.key`) -> template frontmatter keys when exporting files from `templates/`.
    - table block -> markdown table (best effort).
+   - blocks with `dataview` payload should additionally export Obsidian `.base` files into `bases/` with per-view filters/sorts/grouping.
+   - for Anytype date filters, quick options and `includeTime=false` follow `anytype-heart/pkg/lib/database/quickoptions.go` transformation rules before rendering to base expressions.
    - unsupported block -> skip (no fallback snippet yet).
 
 4. Preservation

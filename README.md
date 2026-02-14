@@ -13,6 +13,8 @@ Anytype markdown export is lossy for important cases (multi-selects, object rela
 - Resolve relation keys by relation key or relation object ID, with readable frontmatter keys where possible.
 - Apply type-aware frontmatter ordering: type-visible properties first, then type-hidden properties, then remaining properties.
 - Convert supported blocks (text, file, bookmark, latex, link, table) to Obsidian-friendly markdown
+- Convert Anytype dataview/query blocks into Obsidian `.base` files with per-view filters, grouping, ordering, and sort metadata.
+- Support all current Anytype dataview filter conditions and quick-date options when rendering base filters.
 - Optionally render selected relation values as note links (`-link-as-note-properties`), including synthetic notes for missing tag/status/type option/type objects.
 - Export templates
 
@@ -59,6 +61,7 @@ Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules;
 
 - `notes/*.md` - exported notes.
 - `templates/*.md` - exported templates from Anytype with type-prefixed filenames (e.g., `Human - Contact.md`).
+- `bases/*.base` - exported Obsidian Bases files generated from Anytype dataview/query blocks.
 - `files/*` - copied assets from Anytype export.
 - `_anytype/index.json` - mapping and metadata index.
 - `_anytype/raw/*.json` - raw details for each exported object.
