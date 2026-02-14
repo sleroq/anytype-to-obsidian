@@ -1394,6 +1394,9 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 		if viewType == "kanban" {
 			viewType = "table"
 		}
+		if viewType == "gallery" {
+			viewType = "cards"
+		}
 
 		name := strings.TrimSpace(asString(anyMapGet(viewMap, "name", "Name")))
 		if name == "" {

@@ -1494,6 +1494,27 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 	}
 }
 
+func TestParseDataviewViewsMapsGalleryToCards(t *testing.T) {
+	views := parseDataviewViews(map[string]any{
+		"views": []any{
+			map[string]any{
+				"type": "Gallery",
+				"name": "All",
+			},
+		},
+	}, nil, nil, nil, nil, nil)
+
+	if len(views) != 1 {
+		t.Fatalf("expected one view, got %d", len(views))
+	}
+	if views[0].Type != "cards" {
+		t.Fatalf("expected gallery view to map to cards, got %q", views[0].Type)
+	}
+	if views[0].Name != "All" {
+		t.Fatalf("expected view name to be preserved, got %q", views[0].Name)
+	}
+}
+
 func TestBuildFilterExpressionSupportsAllAnytypeConditions(t *testing.T) {
 	relations := map[string]relationDef{
 		"status": {Key: "status", Name: "Status", Format: 3},
