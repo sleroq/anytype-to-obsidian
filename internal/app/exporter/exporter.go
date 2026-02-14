@@ -2204,7 +2204,7 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 		return
 	}
 	buf.WriteString(prefixLines(body, "> "))
-	buf.WriteString("\n")
+	buf.WriteString("\n\n")
 }
 
 func prefixLines(s string, prefix string) string {

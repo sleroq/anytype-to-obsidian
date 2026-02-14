@@ -534,6 +534,9 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	if !strings.Contains(note, "> [!note]- Collapsed title\n> inside toggle") {
 		t.Fatalf("expected collapsed callout for toggle block, got:\n%s", note)
 	}
+	if !strings.Contains(note, "> [!note] Callout title\n> inside callout\n\n> [!note]- Collapsed title\n> inside toggle") {
+		t.Fatalf("expected adjacent callouts to be separated by a blank line, got:\n%s", note)
+	}
 }
 
 func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
