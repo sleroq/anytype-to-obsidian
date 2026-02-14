@@ -209,6 +209,61 @@ func TestExporterIncludesArchivedPropertiesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestExporterResolvesStatusFromObjectNameWhenRelationOptionMissing(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-status.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-status",
+		"relationKey":    "status",
+		"relationFormat": 3,
+		"name":           "Status",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "status-done.pb.json"), "Page", map[string]any{
+		"id":          "status-done",
+		"name":        "Done",
+		"relationKey": "status",
+		"objectTypes": []any{"ot-relationOption"},
+	}, []map[string]any{
+		{"id": "status-done", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Done", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "task-1.pb.json"), "Page", map[string]any{
+		"id":     "task-1",
+		"name":   "Task One",
+		"status": []any{"status-done"},
+	}, []map[string]any{
+		{"id": "task-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "status:") || !strings.Contains(note, "- \"Done\"") {
+		t.Fatalf("expected status option id to resolve from object name fallback, got:\n%s", note)
+	}
+	if strings.Contains(note, "- \"status-done\"") {
+		t.Fatalf("expected raw option id to be replaced by object name fallback, got:\n%s", note)
+	}
+}
+
 func TestExporterIncludesDynamicPropertiesWhenEnabled(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")

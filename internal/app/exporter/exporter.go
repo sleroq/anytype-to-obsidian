@@ -907,6 +907,8 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 			}
 			if n, ok := optionsByID[id]; ok && n != "" {
 				out = append(out, n)
+			} else if name, ok := objectNamesByID[id]; ok && strings.TrimSpace(name) != "" {
+				out = append(out, name)
 			} else {
 				out = append(out, id)
 			}
