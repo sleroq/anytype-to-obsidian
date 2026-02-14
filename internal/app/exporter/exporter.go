@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	anytypedomain "github.com/sleroq/anytype-to-obsidian/internal/domain/anytype"
+	"github.com/sleroq/anytype-to-obsidian/internal/infra/anytypejson"
 )
 
 type Exporter struct {
@@ -33,111 +36,19 @@ type Stats struct {
 	Files int
 }
 
-type snapshotFile struct {
-	SbType   string `json:"sbType"`
-	Snapshot struct {
-		Data struct {
-			Blocks  []block        `json:"blocks"`
-			Details map[string]any `json:"details"`
-		} `json:"data"`
-	} `json:"snapshot"`
-}
-
-type block struct {
-	ID         string         `json:"id"`
-	ChildrenID []string       `json:"childrenIds"`
-	Fields     map[string]any `json:"fields"`
-
-	Text     *textBlock     `json:"text"`
-	File     *fileBlock     `json:"file"`
-	Bookmark *bookmarkBlock `json:"bookmark"`
-	Latex    *latexBlock    `json:"latex"`
-	Link     *linkBlock     `json:"link"`
-	Relation *relationBlock `json:"relation"`
-	Layout   *layoutBlock   `json:"layout"`
-	Dataview map[string]any `json:"dataview"`
-	Table    map[string]any `json:"table"`
-	Div      map[string]any `json:"div"`
-	TOC      map[string]any `json:"tableOfContents"`
-}
-
-type textBlock struct {
-	Text    string `json:"text"`
-	Style   string `json:"style"`
-	Checked bool   `json:"checked"`
-}
-
-type fileBlock struct {
-	Name           string `json:"name"`
-	Type           string `json:"type"`
-	TargetObjectID string `json:"targetObjectId"`
-}
-
-type bookmarkBlock struct {
-	URL   string `json:"url"`
-	Title string `json:"title"`
-}
-
-type latexBlock struct {
-	Text      string `json:"text"`
-	Processor string `json:"processor"`
-}
-
-type linkBlock struct {
-	TargetBlockID string `json:"targetBlockId"`
-}
-
-type layoutBlock struct {
-	Style string `json:"style"`
-}
-
-type relationBlock struct {
-	Key string `json:"key"`
-}
-
-type relationDef struct {
-	ID     string
-	Key    string
-	Name   string
-	Format int
-}
-
-type typeDef struct {
-	ID              string
-	Name            string
-	SbType          string
-	Details         map[string]any
-	Blocks          []block
-	Featured        []string
-	Recommended     []string
-	RecommendedFile []string
-	Hidden          []string
-}
-
-type relationOption struct {
-	ID      string
-	Name    string
-	SbType  string
-	Details map[string]any
-	Blocks  []block
-}
-
-type objectInfo struct {
-	ID      string
-	Name    string
-	SbType  string
-	Details map[string]any
-	Blocks  []block
-}
-
-type templateInfo struct {
-	ID           string
-	Name         string
-	SbType       string
-	Details      map[string]any
-	Blocks       []block
-	TargetTypeID string
-}
+type block = anytypedomain.Block
+type textBlock = anytypedomain.TextBlock
+type fileBlock = anytypedomain.FileBlock
+type bookmarkBlock = anytypedomain.BookmarkBlock
+type latexBlock = anytypedomain.LatexBlock
+type linkBlock = anytypedomain.LinkBlock
+type layoutBlock = anytypedomain.LayoutBlock
+type relationBlock = anytypedomain.RelationBlock
+type relationDef = anytypedomain.RelationDef
+type typeDef = anytypedomain.TypeDef
+type relationOption = anytypedomain.RelationOption
+type objectInfo = anytypedomain.ObjectInfo
+type templateInfo = anytypedomain.TemplateInfo
 
 type indexFile struct {
 	Notes map[string]string `json:"notes"`
@@ -216,30 +127,16 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, err
 	}
 
-	objects, err := readObjects(filepath.Join(e.InputDir, "objects"))
+	exportData, err := anytypejson.ReadExport(e.InputDir)
 	if err != nil {
 		return Stats{}, err
 	}
-	relations, err := readRelations(filepath.Join(e.InputDir, "relations"))
-	if err != nil {
-		return Stats{}, err
-	}
-	optionsByID, err := readOptions(filepath.Join(e.InputDir, "relationsOptions"))
-	if err != nil {
-		return Stats{}, err
-	}
-	fileObjects, err := readFileObjects(filepath.Join(e.InputDir, "filesObjects"))
-	if err != nil {
-		return Stats{}, err
-	}
-	templates, err := readTemplates(filepath.Join(e.InputDir, "templates"))
-	if err != nil {
-		return Stats{}, err
-	}
-	typesByID, err := readTypes(filepath.Join(e.InputDir, "types"))
-	if err != nil {
-		return Stats{}, err
-	}
+	objects := exportData.Objects
+	relations := exportData.Relations
+	optionsByID := exportData.OptionsByID
+	fileObjects := exportData.FileObjects
+	templates := exportData.Templates
+	typesByID := exportData.TypesByID
 
 	noteDir := filepath.Join(e.OutputDir, "notes")
 	rawDir := filepath.Join(e.OutputDir, "_anytype", "raw")
@@ -456,219 +353,6 @@ Can I delete this folder?
 	}
 
 	return Stats{Notes: len(allObjects), Files: copiedFiles}, nil
-}
-
-func readObjects(dir string) ([]objectInfo, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read objects dir: %w", err)
-	}
-	var out []objectInfo
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		if id == "" {
-			id = strings.TrimSuffix(ent.Name(), ".pb.json")
-		}
-		out = append(out, objectInfo{
-			ID:      id,
-			Name:    asString(f.Snapshot.Data.Details["name"]),
-			SbType:  f.SbType,
-			Details: f.Snapshot.Data.Details,
-			Blocks:  f.Snapshot.Data.Blocks,
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-func readRelations(dir string) (map[string]relationDef, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read relations dir: %w", err)
-	}
-	out := make(map[string]relationDef)
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		key := asString(f.Snapshot.Data.Details["relationKey"])
-		if key == "" && id == "" {
-			continue
-		}
-		def := relationDef{
-			ID:     id,
-			Key:    key,
-			Name:   asString(f.Snapshot.Data.Details["name"]),
-			Format: asInt(f.Snapshot.Data.Details["relationFormat"]),
-		}
-		if key != "" {
-			out[key] = def
-		}
-		if id != "" {
-			out[id] = def
-		}
-	}
-	return out, nil
-}
-
-func readOptions(dir string) (map[string]relationOption, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read relation options dir: %w", err)
-	}
-	out := make(map[string]relationOption)
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		if id == "" {
-			continue
-		}
-		out[id] = relationOption{
-			ID:      id,
-			Name:    strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
-			SbType:  f.SbType,
-			Details: f.Snapshot.Data.Details,
-			Blocks:  f.Snapshot.Data.Blocks,
-		}
-	}
-	return out, nil
-}
-
-func readFileObjects(dir string) (map[string]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read filesObjects dir: %w", err)
-	}
-	out := make(map[string]string)
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		source := asString(f.Snapshot.Data.Details["source"])
-		if id == "" {
-			continue
-		}
-		if source != "" {
-			out[id] = filepath.ToSlash(source)
-			continue
-		}
-		fileExt := asString(f.Snapshot.Data.Details["fileExt"])
-		name := asString(f.Snapshot.Data.Details["name"])
-		if name == "" {
-			name = id
-		}
-		if fileExt != "" {
-			name = name + "." + fileExt
-		}
-		out[id] = filepath.ToSlash(filepath.Join("files", name))
-	}
-	return out, nil
-}
-
-func readTypes(dir string) (map[string]typeDef, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]typeDef{}, nil
-		}
-		return nil, fmt.Errorf("read dir %s: %w", dir, err)
-	}
-	out := make(map[string]typeDef)
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		if id == "" {
-			continue
-		}
-		out[id] = typeDef{
-			ID:              id,
-			Name:            strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
-			SbType:          f.SbType,
-			Details:         f.Snapshot.Data.Details,
-			Blocks:          f.Snapshot.Data.Blocks,
-			Featured:        anyToStringSlice(f.Snapshot.Data.Details["recommendedFeaturedRelations"]),
-			Recommended:     anyToStringSlice(f.Snapshot.Data.Details["recommendedRelations"]),
-			RecommendedFile: anyToStringSlice(f.Snapshot.Data.Details["recommendedFileRelations"]),
-			Hidden:          anyToStringSlice(f.Snapshot.Data.Details["recommendedHiddenRelations"]),
-		}
-	}
-	return out, nil
-}
-
-func readTemplates(dir string) ([]templateInfo, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read templates dir: %w", err)
-	}
-
-	out := make([]templateInfo, 0)
-	for _, ent := range entries {
-		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".pb.json") {
-			continue
-		}
-		f, err := readSnapshot(filepath.Join(dir, ent.Name()))
-		if err != nil {
-			return nil, err
-		}
-		id := asString(f.Snapshot.Data.Details["id"])
-		if id == "" {
-			id = strings.TrimSuffix(ent.Name(), ".pb.json")
-		}
-		out = append(out, templateInfo{
-			ID:           id,
-			Name:         strings.TrimSpace(asString(f.Snapshot.Data.Details["name"])),
-			SbType:       f.SbType,
-			Details:      f.Snapshot.Data.Details,
-			Blocks:       f.Snapshot.Data.Blocks,
-			TargetTypeID: strings.TrimSpace(asString(f.Snapshot.Data.Details["targetObjectType"])),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-func readSnapshot(path string) (snapshotFile, error) {
-	var s snapshotFile
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return s, fmt.Errorf("read %s: %w", path, err)
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return s, fmt.Errorf("decode %s: %w", path, err)
-	}
-	return s, nil
 }
 
 func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
