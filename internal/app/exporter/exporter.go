@@ -1265,10 +1265,21 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 	}
 
 	var buf bytes.Buffer
-	for _, id := range root.ChildrenID {
-		renderBlock(&buf, byID, id, notes, fileObjects, 0, obj.ID)
-	}
+	renderChildren(&buf, byID, root.ChildrenID, notes, fileObjects, 0, obj.ID)
 	return strings.TrimLeft(buf.String(), "\n")
+}
+
+func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
+	numberedIndex := 0
+	for _, id := range children {
+		b, ok := byID[id]
+		if ok && b.Text != nil && b.Text.Style == "Numbered" {
+			numberedIndex++
+		} else {
+			numberedIndex = 0
+		}
+		renderBlock(buf, byID, id, notes, fileObjects, depth, rootID, numberedIndex)
+	}
 }
 
 func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesByID map[string]typeDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string) string {
@@ -1389,7 +1400,7 @@ func collectTemplateRelationKeys(tmpl templateInfo) []string {
 	return ordered
 }
 
-func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
+func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int, rootID string, numberedIndex int) {
 	b, ok := byID[id]
 	if !ok {
 		return
@@ -1401,7 +1412,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	}
 
 	if b.Text != nil {
-		line := renderTextBlock(*b.Text, depth, b.Fields)
+		line := renderTextBlock(*b.Text, depth, b.Fields, numberedIndex)
 		if line != "" {
 			buf.WriteString(line)
 			if !strings.HasSuffix(line, "\n") {
@@ -1460,15 +1471,13 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		}
 	}
 
-	for _, cid := range b.ChildrenID {
-		renderBlock(buf, byID, cid, notes, fileObjects, depth+1, rootID)
-	}
+	renderChildren(buf, byID, b.ChildrenID, notes, fileObjects, depth+1, rootID)
 }
 
-func renderTextBlock(t textBlock, depth int, fields map[string]any) string {
+func renderTextBlock(t textBlock, depth int, fields map[string]any, numberedIndex int) string {
 	text := strings.TrimRight(t.Text, "\n")
 	style := t.Style
-	indent := strings.Repeat("  ", max(0, depth-1))
+	indent := strings.Repeat("\t", max(0, depth-1))
 
 	switch style {
 	case "Title", "Header1", "ToggleHeader1":
@@ -1487,7 +1496,10 @@ func renderTextBlock(t textBlock, depth int, fields map[string]any) string {
 	case "Marked":
 		return indent + "- " + text + "\n"
 	case "Numbered":
-		return indent + "1. " + text + "\n"
+		if numberedIndex <= 0 {
+			numberedIndex = 1
+		}
+		return indent + strconv.Itoa(numberedIndex) + ". " + text + "\n"
 	case "Code":
 		code := strings.TrimLeft(text, "\n")
 		lang := strings.TrimSpace(asString(fields["lang"]))
@@ -1520,9 +1532,7 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 	buf.WriteString(marker + "\n")
 
 	var child bytes.Buffer
-	for _, cid := range b.ChildrenID {
-		renderBlock(&child, byID, cid, notes, fileObjects, depth+1, rootID)
-	}
+	renderChildren(&child, byID, b.ChildrenID, notes, fileObjects, depth+1, rootID)
 	body := strings.TrimRight(child.String(), "\n")
 	if body == "" {
 		return
@@ -1597,7 +1607,7 @@ func renderTableOfContents(byID map[string]block, rootID string) string {
 		if slug == "" {
 			continue
 		}
-		indent := strings.Repeat("  ", max(0, h.level-1))
+		indent := strings.Repeat("\t", max(0, h.level-1))
 		buf.WriteString(indent + "- [" + escapeBrackets(h.text) + "](#" + slug + ")\n")
 	}
 	return buf.String()

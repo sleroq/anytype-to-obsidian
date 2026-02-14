@@ -61,10 +61,17 @@ we need to cover our exporter's features with tests so we can make sure we suppo
 
 3. Block conversion
    - text -> markdown text/styles.
+   - `Numbered` list numbering must be sequential per sibling run (`1.`, `2.`, `3.`), reset after non-numbered sibling, with nested runs counted independently.
+   - Nested markdown list indentation should use tabs (`\t`) instead of spaces for `Checkbox` / `Marked` / `Numbered` blocks and generated TOC lists.
+   - code text blocks use `fields.lang` for fenced code language (for example, `jsx`).
+   - `Callout` / `Toggle` text styles map to Obsidian callouts (`> [!note]` / `> [!note]-`) with quoted children.
    - file block -> markdown link/image.
    - bookmark block -> markdown link.
    - latex block -> `$$...$$`.
    - link block -> wiki-link to exported note when target is known.
+   - link block target `_date_YYYY-MM-DD` -> plain date text `YYYY-MM-DD`.
+   - `div.style` values `Line`/`Dots` -> horizontal rules (`---`/`***`).
+   - `tableOfContents` block -> generated markdown list of heading anchors.
    - template relation blocks (`blocks[*].relation.key`) -> template frontmatter keys when exporting files from `templates/`.
    - table block -> markdown table (best effort).
    - unsupported block -> skip (no fallback snippet yet).

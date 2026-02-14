@@ -477,7 +477,7 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 		"id":   "blocks-page",
 		"name": "Blocks Page",
 	}, []map[string]any{
-		{"id": "blocks-page", "childrenIds": []string{"title", "h1", "h2", "toc", "line-divider", "dots-divider", "date-link", "code", "callout", "toggle"}},
+		{"id": "blocks-page", "childrenIds": []string{"title", "h1", "h2", "toc", "line-divider", "dots-divider", "date-link", "num-1", "num-2", "num-3", "code", "callout", "toggle"}},
 		{"id": "title", "text": map[string]any{"text": "Blocks Page", "style": "Title"}},
 		{"id": "h1", "text": map[string]any{"text": "Heading One", "style": "Header1"}},
 		{"id": "h2", "text": map[string]any{"text": "Heading Two", "style": "Header2"}},
@@ -485,6 +485,10 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 		{"id": "line-divider", "div": map[string]any{"style": "Line"}},
 		{"id": "dots-divider", "div": map[string]any{"style": "Dots"}},
 		{"id": "date-link", "link": map[string]any{"targetBlockId": "_date_2026-02-04"}},
+		{"id": "num-1", "text": map[string]any{"text": "first", "style": "Numbered"}},
+		{"id": "num-2", "text": map[string]any{"text": "second", "style": "Numbered"}, "childrenIds": []string{"num-2-1"}},
+		{"id": "num-2-1", "text": map[string]any{"text": "nested", "style": "Numbered"}},
+		{"id": "num-3", "text": map[string]any{"text": "third", "style": "Numbered"}},
 		{"id": "code", "fields": map[string]any{"lang": "jsx"}, "text": map[string]any{"text": "\nconsole.log('lol')", "style": "Code"}},
 		{"id": "callout", "text": map[string]any{"text": "Callout title", "style": "Callout"}, "childrenIds": []string{"callout-body"}},
 		{"id": "callout-body", "text": map[string]any{"text": "inside callout", "style": "Paragraph"}},
@@ -514,6 +518,9 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	}
 	if !strings.Contains(note, "2026-02-04") {
 		t.Fatalf("expected date link target to render as date text, got:\n%s", note)
+	}
+	if !strings.Contains(note, "1. first\n2. second\n1. nested\n3. third") {
+		t.Fatalf("expected numbered list sequence with nested numbering, got:\n%s", note)
 	}
 	if !strings.Contains(note, "```jsx\nconsole.log('lol')\n```") {
 		t.Fatalf("expected code block with language, got:\n%s", note)
