@@ -121,16 +121,16 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "related: \"[[Task Two.md]]\"") {
+	if !strings.Contains(note, "related:") || !strings.Contains(note, "- \"[[Task Two.md]]\"") {
 		t.Fatalf("expected related object relation to be rendered, got:\n%s", note)
 	}
-	if !strings.Contains(note, "status: \"Doing\"") {
+	if !strings.Contains(note, "status:") || !strings.Contains(note, "- \"Doing\"") {
 		t.Fatalf("expected status option to be resolved, got:\n%s", note)
 	}
-	if !strings.Contains(note, "Task Type: \"Bug\"") {
+	if !strings.Contains(note, "Task Type:") || !strings.Contains(note, "- \"Bug\"") {
 		t.Fatalf("expected relation-id property to render readable key and option value, got:\n%s", note)
 	}
-	if !strings.Contains(note, "tag:") || !strings.Contains(note, "- \"go\"") || !strings.Contains(note, "- \"export\"") {
+	if !strings.Contains(note, "tags:") || !strings.Contains(note, "- \"go\"") || !strings.Contains(note, "- \"export\"") {
 		t.Fatalf("expected multi tag values, got:\n%s", note)
 	}
 	if strings.Contains(note, "abcdefabcdefabcdefabcdef:") {
@@ -246,7 +246,7 @@ func TestExporterIncludesDynamicPropertiesWhenEnabled(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "backlinks: \"obj-2\"") {
+	if !strings.Contains(note, "backlinks:") || !strings.Contains(note, "- \"obj-2\"") {
 		t.Fatalf("expected backlinks to be included when enabled, got:\n%s", note)
 	}
 }
@@ -309,7 +309,7 @@ func TestExporterSupportsPropertyIncludeExcludeOverrides(t *testing.T) {
 	if !strings.Contains(note, "layout: \"note\"") {
 		t.Fatalf("expected layout to be force-included, got:\n%s", note)
 	}
-	if !strings.Contains(note, "backlinks: \"[[Task Two.md]]\"") {
+	if !strings.Contains(note, "backlinks:") || !strings.Contains(note, "- \"[[Task Two.md]]\"") {
 		t.Fatalf("expected force-include to win over exclude for backlinks, got:\n%s", note)
 	}
 	if strings.Contains(note, "custom:") {
@@ -936,7 +936,7 @@ func TestExporterCanLinkTagPropertyAsNoteAndCreatesOptionNote(t *testing.T) {
 		t.Fatalf("read page note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "tag: \"[[go.md]]\"") {
+	if !strings.Contains(note, "tags:") || !strings.Contains(note, "- \"[[go.md]]\"") {
 		t.Fatalf("expected tag property to be rendered as note link, got:\n%s", note)
 	}
 
@@ -1474,7 +1474,7 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 	if !strings.Contains(base, "views:") || !strings.Contains(base, "name: \"All\"") {
 		t.Fatalf("expected base views to be rendered, got:\n%s", base)
 	}
-	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.name\"") || !strings.Contains(base, "\"note.tag\"") || !strings.Contains(base, "\"note.dueDate\"") {
+	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.name\"") || !strings.Contains(base, "\"note.tags\"") || !strings.Contains(base, "\"note.dueDate\"") {
 		t.Fatalf("expected selected properties mapped into view order, got:\n%s", base)
 	}
 	if strings.Contains(base, "\n      - \"note.status\"\n") {
@@ -1536,6 +1536,84 @@ func TestBuildFilterExpressionSupportsAllAnytypeConditions(t *testing.T) {
 			t.Fatalf("expected non-empty expression for condition %s", condition)
 		}
 	}
+}
+
+func TestExporterRunsPrettierWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+	prepareMinimalExportFixture(t, input)
+
+	originalRunner := prettierCommandRunner
+	t.Cleanup(func() {
+		prettierCommandRunner = originalRunner
+	})
+
+	called := false
+	callCount := 0
+	calledWithDir := ""
+	prettierCommandRunner = func(outputDir string) error {
+		called = true
+		callCount++
+		calledWithDir = outputDir
+		return nil
+	}
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, RunPrettier: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected prettier runner to be called")
+	}
+	if calledWithDir != output {
+		t.Fatalf("expected prettier runner to be called with output dir %q, got %q", output, calledWithDir)
+	}
+	if callCount != 1 {
+		t.Fatalf("expected prettier runner to be called once, got %d", callCount)
+	}
+}
+
+func TestExporterIgnoresPrettierFailure(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+	prepareMinimalExportFixture(t, input)
+
+	originalRunner := prettierCommandRunner
+	t.Cleanup(func() {
+		prettierCommandRunner = originalRunner
+	})
+
+	prettierCommandRunner = func(string) error {
+		return os.ErrNotExist
+	}
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, RunPrettier: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter should not fail when prettier fails: %v", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join(output, "notes", "Task One.md")); statErr != nil {
+		t.Fatalf("expected export files to be written despite prettier failure: %v", statErr)
+	}
+}
+
+func prepareMinimalExportFixture(t *testing.T, input string) {
+	t.Helper()
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Task One",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
 }
 
 func writePBJSON(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any) {

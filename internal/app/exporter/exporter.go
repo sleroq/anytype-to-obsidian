@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/progress"
 	anytypedomain "github.com/sleroq/anytype-to-obsidian/internal/domain/anytype"
 	"github.com/sleroq/anytype-to-obsidian/internal/infra/anytypejson"
 )
@@ -22,6 +24,7 @@ import (
 type Exporter struct {
 	InputDir                  string
 	OutputDir                 string
+	RunPrettier               bool
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
 	IncludeArchivedProperties bool
@@ -52,6 +55,14 @@ type templateInfo = anytypedomain.TemplateInfo
 
 type indexFile struct {
 	Notes map[string]string `json:"notes"`
+}
+
+var prettierCommandRunner = func(outputDir string) error {
+	cmd := exec.Command("npx", "--yes", "prettier", "--write", "--ignore-unknown", ".")
+	cmd.Dir = outputDir
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 var dynamicPropertyKeys = map[string]struct{}{
@@ -113,6 +124,104 @@ type propertyFilters struct {
 var createdDateKeys = []string{"createdDate", "addedDate"}
 var changedDateKeys = []string{"changedDate"}
 var modifiedDateKeys = []string{"lastModifiedDate", "modifiedDate"}
+
+type exportProgressBar struct {
+	enabled         bool
+	total           int
+	current         int
+	lastRenderWidth int
+	label           string
+	bar             progress.Model
+}
+
+func newExportProgressBar(total int) exportProgressBar {
+	if total <= 0 {
+		total = 1
+	}
+	bar := progress.New(progress.WithDefaultGradient(), progress.WithoutPercentage())
+	bar.Width = 36
+
+	if cols, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && cols > 0 {
+		width := cols - 40
+		if width < 16 {
+			width = 16
+		}
+		if width > 64 {
+			width = 64
+		}
+		bar.Width = width
+	}
+
+	return exportProgressBar{
+		enabled: isTerminal(os.Stderr),
+		total:   total,
+		bar:     bar,
+	}
+}
+
+func (p *exportProgressBar) Advance(label string) {
+	if !p.enabled {
+		return
+	}
+	p.current++
+	if p.current > p.total {
+		p.current = p.total
+	}
+	p.label = label
+	p.render()
+}
+
+func (p *exportProgressBar) Finish(label string) {
+	if !p.enabled {
+		return
+	}
+	p.current = p.total
+	p.label = label
+	p.render()
+	fmt.Fprint(os.Stderr, "\n")
+	p.lastRenderWidth = 0
+}
+
+func (p *exportProgressBar) Close() {
+	if !p.enabled {
+		return
+	}
+	if p.lastRenderWidth > 0 {
+		fmt.Fprint(os.Stderr, "\n")
+		p.lastRenderWidth = 0
+	}
+}
+
+func (p *exportProgressBar) render() {
+	percent := float64(p.current) / float64(p.total)
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 1 {
+		percent = 1
+	}
+	line := fmt.Sprintf("%s %3.0f%% %d/%d %s", p.bar.ViewAs(percent), percent*100, p.current, p.total, strings.TrimSpace(p.label))
+	pad := ""
+	if p.lastRenderWidth > len(line) {
+		pad = strings.Repeat(" ", p.lastRenderWidth-len(line))
+	}
+	fmt.Fprintf(os.Stderr, "\r%s%s", line, pad)
+	p.lastRenderWidth = len(line)
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
 
 func (e Exporter) Run() (Stats, error) {
 	if e.InputDir == "" || e.OutputDir == "" {
@@ -187,6 +296,12 @@ Can I delete this folder?
 	allObjects := make([]objectInfo, 0, len(objects)+len(syntheticObjects))
 	allObjects = append(allObjects, objects...)
 	allObjects = append(allObjects, syntheticObjects...)
+
+	progressBar := newExportProgressBar(len(objects) + len(templates) + len(allObjects) + 1)
+	if e.RunPrettier {
+		progressBar.total++
+	}
+	defer progressBar.Close()
 
 	notePathByID := make(map[string]string, len(allObjects))
 	used := map[string]int{}
@@ -268,6 +383,7 @@ Can I delete this folder?
 	for _, obj := range objects {
 		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects)
 		if !ok {
+			progressBar.Advance("exporting bases")
 			continue
 		}
 		title := inferObjectTitle(obj)
@@ -288,6 +404,7 @@ Can I delete this folder?
 		if err := applyExportedFileTimes(basePath, obj.Details); err != nil {
 			return Stats{}, fmt.Errorf("apply base timestamps %s: %w", obj.ID, err)
 		}
+		progressBar.Advance("exporting bases")
 	}
 
 	for _, tmpl := range templates {
@@ -303,6 +420,7 @@ Can I delete this folder?
 		if err := applyExportedFileTimes(templateAbsPath, tmpl.Details); err != nil {
 			return Stats{}, fmt.Errorf("apply template timestamps %s: %w", tmpl.ID, err)
 		}
+		progressBar.Advance("exporting templates")
 	}
 
 	for _, obj := range allObjects {
@@ -343,6 +461,7 @@ Can I delete this folder?
 		if err := os.WriteFile(rawPath, rawBytes, 0o644); err != nil {
 			return Stats{}, err
 		}
+		progressBar.Advance("exporting notes")
 	}
 
 	idx := indexFile{Notes: notePathByID}
@@ -353,8 +472,22 @@ Can I delete this folder?
 	if err := os.WriteFile(filepath.Join(anytypeDir, "index.json"), indexBytes, 0o644); err != nil {
 		return Stats{}, err
 	}
+	progressBar.Advance("writing index")
+
+	if e.RunPrettier {
+		if err := tryRunPrettier(e.OutputDir); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to apply prettier to export: %v\n", err)
+		}
+		progressBar.Advance("formatting with prettier")
+	}
+
+	progressBar.Finish("done")
 
 	return Stats{Notes: len(allObjects), Files: copiedFiles}, nil
+}
+
+func tryRunPrettier(outputDir string) error {
+	return prettierCommandRunner(outputDir)
 }
 
 func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
@@ -596,6 +729,9 @@ func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel boo
 }
 
 func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
+	if isTagProperty(rawKey, rel, hasRel) {
+		return "tags"
+	}
 	if !hasRel {
 		return rawKey
 	}
@@ -609,6 +745,19 @@ func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
 		return rel.Name
 	}
 	return rawKey
+}
+
+func isTagProperty(rawKey string, rel relationDef, hasRel bool) bool {
+	if normalizePropertyKey(rawKey) == "tag" {
+		return true
+	}
+	if !hasRel {
+		return false
+	}
+	if normalizePropertyKey(rel.Key) == "tag" {
+		return true
+	}
+	return normalizePropertyKey(rel.Name) == "tag"
 }
 
 func shouldSkipUnnamedProperty(key string, rel relationDef, hasRel bool) bool {
@@ -650,6 +799,7 @@ func isLikelyCIDKey(s string) bool {
 
 func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, dateByType bool, linkAsNote bool) any {
 	rel, hasRel := relations[key]
+	listValue := isListValue(value)
 	if !hasRel {
 		if dateByType {
 			return formatDateValue(value)
@@ -677,6 +827,9 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 			} else {
 				out = append(out, id)
 			}
+		}
+		if listValue {
+			return out
 		}
 		if len(out) == 1 {
 			return out[0]
@@ -706,6 +859,9 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 				out = append(out, id)
 			}
 		}
+		if listValue {
+			return out
+		}
 		if len(out) == 1 {
 			return out[0]
 		}
@@ -720,6 +876,9 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 				out = append(out, id)
 			}
 		}
+		if listValue {
+			return out
+		}
 		if len(out) == 1 {
 			return out[0]
 		}
@@ -731,6 +890,15 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		return formatDateValue(value)
 	default:
 		return value
+	}
+}
+
+func isListValue(v any) bool {
+	switch v.(type) {
+	case []any, []string:
+		return true
+	default:
+		return false
 	}
 }
 

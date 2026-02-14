@@ -13,6 +13,7 @@ func main() {
 	var input string
 	var output string
 	var filenameEscaping string
+	var runPrettier bool
 	var includeDynamicProperties bool
 	var includeArchivedProperties bool
 	var excludeEmptyProperties bool
@@ -22,6 +23,7 @@ func main() {
 
 	flag.StringVar(&input, "input", "./Anytype-json", "Path to Anytype-json export directory")
 	flag.StringVar(&output, "output", "./obsidian-vault", "Path to output Obsidian vault")
+	flag.BoolVar(&runPrettier, "prettier", true, "Try to run npx prettier on exported files (set to false to disable)")
 	flag.StringVar(&filenameEscaping, "filename-escaping", "auto", "Filename escaping mode: auto, posix, windows")
 	flag.BoolVar(&includeDynamicProperties, "include-dynamic-properties", false, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
 	flag.BoolVar(&includeArchivedProperties, "include-archived-properties", false, "Include archived/unresolved Anytype relation properties that have no readable relation name")
@@ -34,6 +36,7 @@ func main() {
 	exp := exporter.Exporter{
 		InputDir:                  input,
 		OutputDir:                 output,
+		RunPrettier:               runPrettier,
 		FilenameEscaping:          filenameEscaping,
 		IncludeDynamicProperties:  includeDynamicProperties,
 		IncludeArchivedProperties: includeArchivedProperties,
