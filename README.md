@@ -13,6 +13,10 @@ Convert Anytype JSON Export into Obsidian Markdown with relations and metadata p
 
 ## Quick start
 
+1. Export your Anytype Space in Any-Block format. Choose `JSON` as the file format and disale `Zip archive`
+2. Get binary for your platform from [releases](https://github.com/sleroq/anytype-to-obsidian/releases)
+3. Run it specifying location of exported space: `anytype-to-obsidian.exe -input ./Anytype-exported-json -output ./result-directory`
+
 Run in interactive mode (no arguments):
 
 ```bash
