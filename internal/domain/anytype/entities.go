@@ -29,9 +29,25 @@ type Block struct {
 }
 
 type TextBlock struct {
-	Text    string `json:"text"`
-	Style   string `json:"style"`
-	Checked bool   `json:"checked"`
+	Text    string     `json:"text"`
+	Style   string     `json:"style"`
+	Checked bool       `json:"checked"`
+	Marks   *TextMarks `json:"marks"`
+}
+
+type TextMarks struct {
+	Marks []TextMark `json:"marks"`
+}
+
+type TextMark struct {
+	Range TextMarkRange `json:"range"`
+	Type  string        `json:"type"`
+	Param string        `json:"param"`
+}
+
+type TextMarkRange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
 }
 
 type FileBlock struct {

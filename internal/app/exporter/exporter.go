@@ -317,13 +317,14 @@ Can I delete this folder?
 			typesByID,
 			optionNamesByID,
 			notePathByID,
+			noteRelPath,
 			objectNamesByID,
 			fileObjects,
 			e.IncludeDynamicProperties,
 			e.IncludeArchivedProperties,
 			filters,
 		)
-		body := renderBody(obj, idToObject, notePathByID, fileObjects)
+		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
 		}
@@ -355,7 +356,7 @@ Can I delete this folder?
 	return Stats{Notes: len(allObjects), Files: copiedFiles}, nil
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
 	keys, includeByType, dateByType := orderedFrontmatterKeys(obj, relations, typesByID)
 
 	var buf bytes.Buffer
@@ -377,7 +378,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 			continue
 		}
 		v := obj.Details[k]
-		converted := convertPropertyValue(k, v, relations, optionsByID, notes, objectNamesByID, fileObjects, dateByType[k], filters.hasLinkAsNote(k, rel, hasRel))
+		converted := convertPropertyValue(k, v, relations, optionsByID, notes, sourceNotePath, objectNamesByID, fileObjects, dateByType[k], filters.hasLinkAsNote(k, rel, hasRel))
 		if filters.excludeEmpty && isEmptyFrontmatterValue(converted) {
 			continue
 		}
@@ -646,7 +647,7 @@ func isLikelyCIDKey(s string) bool {
 	return true
 }
 
-func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, dateByType bool, linkAsNote bool) any {
+func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, dateByType bool, linkAsNote bool) any {
 	rel, hasRel := relations[key]
 	if !hasRel {
 		if dateByType {
@@ -669,7 +670,7 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if note, ok := notes[id]; ok {
-				out = append(out, "[["+note+"]]")
+				out = append(out, "[["+relativeWikiTarget(sourceNotePath, note)+"]]")
 			} else if name, ok := objectNamesByID[id]; ok && strings.TrimSpace(name) != "" {
 				out = append(out, name)
 			} else {
@@ -694,7 +695,7 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		for _, id := range ids {
 			if linkAsNote {
 				if note, ok := notes[id]; ok {
-					out = append(out, "[["+note+"]]")
+					out = append(out, "[["+relativeWikiTarget(sourceNotePath, note)+"]]")
 					continue
 				}
 			}
@@ -969,7 +970,7 @@ func parseAnytypeTimestamp(value any) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string) string {
+func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, sourceNotePath string, fileObjects map[string]string) string {
 	byID := make(map[string]block, len(obj.Blocks))
 	for _, b := range obj.Blocks {
 		byID[b.ID] = b
@@ -990,11 +991,11 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 	}
 
 	var buf bytes.Buffer
-	renderChildren(&buf, byID, children, notes, fileObjects, 0, obj.ID)
+	renderChildren(&buf, byID, children, notes, sourceNotePath, fileObjects, 0, obj.ID)
 	return strings.TrimLeft(buf.String(), "\n")
 }
 
-func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
+func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string) {
 	numberedIndex := 0
 	for _, id := range children {
 		b, ok := byID[id]
@@ -1003,7 +1004,7 @@ func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string,
 		} else {
 			numberedIndex = 0
 		}
-		renderBlock(buf, byID, id, notes, fileObjects, depth, rootID, numberedIndex)
+		renderBlock(buf, byID, id, notes, sourceNotePath, fileObjects, depth, rootID, numberedIndex)
 	}
 }
 
@@ -1036,7 +1037,7 @@ func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesBy
 	}
 	buf.WriteString("---\n\n")
 
-	body := renderBody(objectInfo{ID: tmpl.ID, Name: tmpl.Name, Details: tmpl.Details, Blocks: tmpl.Blocks}, objects, notes, fileObjects)
+	body := renderBody(objectInfo{ID: tmpl.ID, Name: tmpl.Name, Details: tmpl.Details, Blocks: tmpl.Blocks}, objects, notes, "", fileObjects)
 	buf.WriteString(body)
 	return buf.String()
 }
@@ -1282,7 +1283,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 			customOrderRaw := asAnySlice(anyMapGet(sortMap, "customOrder", "CustomOrder"))
 			customOrder := make([]string, 0, len(customOrderRaw))
 			for _, item := range customOrderRaw {
-				mapped := convertPropertyValue(relationKey, item, relations, optionNamesByID, notes, objectNamesByID, fileObjects, false, false)
+				mapped := convertPropertyValue(relationKey, item, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
 				customOrder = append(customOrder, mappedToString(mapped))
 			}
 			view.Sort = append(view.Sort, baseSortSpec{
@@ -1422,7 +1423,7 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 		condition, value = normalizeDateFilterCondition(condition, value, quickOption, includeTime)
 	}
 
-	mapped := convertPropertyValue(relationKey, value, relations, optionNamesByID, notes, objectNamesByID, fileObjects, false, false)
+	mapped := convertPropertyValue(relationKey, value, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
 
 	switch condition {
 	case "AndRange":
@@ -1814,7 +1815,7 @@ func collectTemplateRelationKeys(tmpl templateInfo) []string {
 	return ordered
 }
 
-func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int, rootID string, numberedIndex int) {
+func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string, numberedIndex int) {
 	b, ok := byID[id]
 	if !ok {
 		return
@@ -1825,12 +1826,12 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	}
 
 	if b.Text != nil && (b.Text.Style == "Callout" || b.Text.Style == "Toggle") {
-		renderCalloutBlock(buf, byID, b, notes, fileObjects, depth, rootID)
+		renderCalloutBlock(buf, byID, b, notes, sourceNotePath, fileObjects, depth, rootID)
 		return
 	}
 
 	if b.Text != nil {
-		line := renderTextBlock(*b.Text, depth, b.Fields, numberedIndex)
+		line := renderTextBlock(*b.Text, depth, b.Fields, notes, sourceNotePath, numberedIndex)
 		if line != "" {
 			buf.WriteString(line)
 			if !strings.HasSuffix(line, "\n") {
@@ -1865,7 +1866,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		}
 	} else if b.Link != nil {
 		if note, ok := notes[b.Link.TargetBlockID]; ok {
-			buf.WriteString("[[" + note + "]]\n")
+			buf.WriteString("[[" + relativeWikiTarget(sourceNotePath, note) + "]]\n")
 		} else if date := linkTargetDate(b.Link.TargetBlockID); date != "" {
 			buf.WriteString(date + "\n")
 		}
@@ -1889,7 +1890,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		}
 	}
 
-	renderChildren(buf, byID, b.ChildrenID, notes, fileObjects, depth+1, rootID)
+	renderChildren(buf, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, depth+1, rootID)
 }
 
 func isSystemTitleBlock(b block) bool {
@@ -1904,8 +1905,9 @@ func isSystemTitleBlock(b block) bool {
 	return false
 }
 
-func renderTextBlock(t textBlock, depth int, fields map[string]any, numberedIndex int) string {
+func renderTextBlock(t textBlock, depth int, fields map[string]any, notes map[string]string, sourceNotePath string, numberedIndex int) string {
 	text := strings.TrimRight(t.Text, "\n")
+	text = applyTextMarks(text, t.Marks, notes, sourceNotePath)
 	style := t.Style
 	indent := strings.Repeat("\t", max(0, depth-1))
 
@@ -1947,7 +1949,68 @@ func renderTextBlock(t textBlock, depth int, fields map[string]any, numberedInde
 	}
 }
 
-func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
+func applyTextMarks(text string, marks *anytypedomain.TextMarks, notes map[string]string, sourceNotePath string) string {
+	if strings.TrimSpace(text) == "" || marks == nil || len(marks.Marks) == 0 || len(notes) == 0 {
+		return text
+	}
+
+	type mentionMark struct {
+		from int
+		to   int
+		note string
+	}
+
+	runes := []rune(text)
+	mentions := make([]mentionMark, 0, len(marks.Marks))
+	for _, mark := range marks.Marks {
+		if !strings.EqualFold(strings.TrimSpace(mark.Type), "mention") {
+			continue
+		}
+		note := notes[strings.TrimSpace(mark.Param)]
+		if note == "" {
+			continue
+		}
+		from := mark.Range.From
+		to := mark.Range.To
+		if from < 0 {
+			from = 0
+		}
+		if to > len(runes) {
+			to = len(runes)
+		}
+		if to <= from {
+			continue
+		}
+		mentions = append(mentions, mentionMark{from: from, to: to, note: note})
+	}
+	if len(mentions) == 0 {
+		return text
+	}
+
+	sort.Slice(mentions, func(i, j int) bool {
+		if mentions[i].from == mentions[j].from {
+			return mentions[i].to < mentions[j].to
+		}
+		return mentions[i].from < mentions[j].from
+	})
+
+	var out strings.Builder
+	cursor := 0
+	for _, mention := range mentions {
+		if mention.from < cursor {
+			continue
+		}
+		out.WriteString(string(runes[cursor:mention.from]))
+		out.WriteString("[[")
+		out.WriteString(relativeWikiTarget(sourceNotePath, mention.note))
+		out.WriteString("]]")
+		cursor = mention.to
+	}
+	out.WriteString(string(runes[cursor:]))
+	return out.String()
+}
+
+func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes map[string]string, sourceNotePath string, fileObjects map[string]string, depth int, rootID string) {
 	if b.Text == nil {
 		return
 	}
@@ -1962,7 +2025,7 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 	buf.WriteString(marker + "\n")
 
 	var child bytes.Buffer
-	renderChildren(&child, byID, b.ChildrenID, notes, fileObjects, depth+1, rootID)
+	renderChildren(&child, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, depth+1, rootID)
 	body := strings.TrimRight(child.String(), "\n")
 	if body == "" {
 		return
@@ -2086,6 +2149,28 @@ func linkTargetDate(target string) string {
 		return strings.TrimPrefix(target, prefix)
 	}
 	return ""
+}
+
+func relativeWikiTarget(sourceNotePath string, targetNotePath string) string {
+	targetNotePath = filepath.ToSlash(strings.TrimSpace(targetNotePath))
+	if targetNotePath == "" {
+		return ""
+	}
+	sourceNotePath = filepath.ToSlash(strings.TrimSpace(sourceNotePath))
+	if sourceNotePath == "" {
+		return targetNotePath
+	}
+
+	sourceDir := filepath.ToSlash(filepath.Dir(sourceNotePath))
+	rel, err := filepath.Rel(sourceDir, targetNotePath)
+	if err != nil || strings.TrimSpace(rel) == "" {
+		return targetNotePath
+	}
+	rel = filepath.ToSlash(rel)
+	if strings.HasPrefix(rel, "./") || strings.HasPrefix(rel, "../") {
+		return rel
+	}
+	return "./" + rel
 }
 
 func renderTable(byID map[string]block, tableBlock block) string {

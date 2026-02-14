@@ -121,7 +121,7 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "related: \"[[notes/Task Two.md]]\"") {
+	if !strings.Contains(note, "related: \"[[./Task Two.md]]\"") {
 		t.Fatalf("expected related object relation to be rendered, got:\n%s", note)
 	}
 	if !strings.Contains(note, "status: \"Doing\"") {
@@ -309,7 +309,7 @@ func TestExporterSupportsPropertyIncludeExcludeOverrides(t *testing.T) {
 	if !strings.Contains(note, "layout: \"note\"") {
 		t.Fatalf("expected layout to be force-included, got:\n%s", note)
 	}
-	if !strings.Contains(note, "backlinks: \"[[notes/Task Two.md]]\"") {
+	if !strings.Contains(note, "backlinks: \"[[./Task Two.md]]\"") {
 		t.Fatalf("expected force-include to win over exclude for backlinks, got:\n%s", note)
 	}
 	if strings.Contains(note, "custom:") {
@@ -533,6 +533,61 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	}
 	if !strings.Contains(note, "> [!note]- Collapsed title\n> inside toggle") {
 		t.Fatalf("expected collapsed callout for toggle block, got:\n%s", note)
+	}
+}
+
+func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "person-1.pb.json"), "Page", map[string]any{
+		"id":   "person-1",
+		"name": "Anastasiya Pervusheva",
+	}, []map[string]any{
+		{"id": "person-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Anastasiya Pervusheva", "style": "Title"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Mention Page",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title", "p1"}},
+		{"id": "title", "text": map[string]any{"text": "Mention Page", "style": "Title"}},
+		{"id": "p1", "text": map[string]any{
+			"text":  "Hello Anastasiya Pervusheva!",
+			"style": "Paragraph",
+			"marks": map[string]any{
+				"marks": []any{
+					map[string]any{
+						"range": map[string]any{"from": 6, "to": 27},
+						"type":  "Mention",
+						"param": "person-1",
+					},
+				},
+			},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Mention Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "Hello [[./Anastasiya Pervusheva.md]]!") {
+		t.Fatalf("expected mention mark to render note link, got:\n%s", note)
 	}
 }
 
@@ -822,7 +877,7 @@ func TestExporterCanLinkTypePropertyAsNoteAndCreatesTypeNote(t *testing.T) {
 		t.Fatalf("read person note: %v", err)
 	}
 	personNote := string(personNoteBytes)
-	if !strings.Contains(personNote, "type: \"[[notes/Human.md]]\"") {
+	if !strings.Contains(personNote, "type: \"[[./Human.md]]\"") {
 		t.Fatalf("expected type property to be rendered as note link, got:\n%s", personNote)
 	}
 
@@ -881,7 +936,7 @@ func TestExporterCanLinkTagPropertyAsNoteAndCreatesOptionNote(t *testing.T) {
 		t.Fatalf("read page note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "tag: \"[[notes/go.md]]\"") {
+	if !strings.Contains(note, "tag: \"[[./go.md]]\"") {
 		t.Fatalf("expected tag property to be rendered as note link, got:\n%s", note)
 	}
 
@@ -1115,6 +1170,7 @@ func TestConvertPropertyValueFormatsDateToDay(t *testing.T) {
 		map[string]relationDef{"dueDate": {Format: 4}},
 		nil,
 		nil,
+		"",
 		nil,
 		nil,
 		false,
@@ -1130,6 +1186,7 @@ func TestConvertPropertyValueFormatsDateToDay(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		"",
 		nil,
 		nil,
 		true,
