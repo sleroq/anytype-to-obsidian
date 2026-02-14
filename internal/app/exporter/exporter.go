@@ -455,7 +455,7 @@ Can I delete this folder?
 		if err := os.MkdirAll(filepath.Dir(templateAbsPath), 0o755); err != nil {
 			return Stats{}, err
 		}
-		content := renderTemplate(tmpl, relations, typesByID, idToObject, notePathByID, fileObjects, !e.DisablePictureToCover)
+		content := renderTemplate(tmpl, relations, idToObject, notePathByID, fileObjects, !e.DisablePictureToCover)
 		if err := os.WriteFile(templateAbsPath, []byte(content), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write template %s: %w", tmpl.ID, err)
 		}
@@ -1272,19 +1272,11 @@ func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string,
 	}
 }
 
-func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesByID map[string]typeDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string, pictureToCover bool) string {
-	typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
+func renderTemplate(tmpl templateInfo, relations map[string]relationDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string, pictureToCover bool) string {
 	keys := collectTemplateRelationKeys(tmpl)
 
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
-	writeYAMLKeyValue(&buf, "anytype_template_id", tmpl.ID)
-	if tmpl.TargetTypeID != "" {
-		writeYAMLKeyValue(&buf, "anytype_target_type_id", tmpl.TargetTypeID)
-	}
-	if typeName != "" {
-		writeYAMLKeyValue(&buf, "anytype_target_type", typeName)
-	}
 
 	used := map[string]struct{}{}
 	for _, raw := range keys {

@@ -1359,11 +1359,8 @@ func TestExporterGeneratesTemplatesFromTemplateBlocks(t *testing.T) {
 	if strings.Contains(template, "\n# Contact\n") || strings.Contains(template, "\n# \n") {
 		t.Fatalf("expected root title block to be skipped in template body, got:\n%s", template)
 	}
-	if !strings.Contains(template, "anytype_template_id: \"tmpl-1\"") {
-		t.Fatalf("expected template id frontmatter, got:\n%s", template)
-	}
-	if !strings.Contains(template, "anytype_target_type: \"Human\"") {
-		t.Fatalf("expected target type name frontmatter, got:\n%s", template)
+	if strings.Contains(template, "anytype_template_id:") || strings.Contains(template, "anytype_target_type_id:") || strings.Contains(template, "anytype_target_type:") {
+		t.Fatalf("expected hidden anytype metadata to be omitted from template frontmatter, got:\n%s", template)
 	}
 	if !strings.Contains(template, "dateOfBirth: null") {
 		t.Fatalf("expected relation block field to be exported, got:\n%s", template)
