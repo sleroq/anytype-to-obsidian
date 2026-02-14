@@ -55,6 +55,8 @@ type block struct {
 	Relation *relationBlock `json:"relation"`
 	Layout   *layoutBlock   `json:"layout"`
 	Table    map[string]any `json:"table"`
+	Div      map[string]any `json:"div"`
+	TOC      map[string]any `json:"tableOfContents"`
 }
 
 type textBlock struct {
@@ -75,7 +77,8 @@ type bookmarkBlock struct {
 }
 
 type latexBlock struct {
-	Text string `json:"text"`
+	Text      string `json:"text"`
+	Processor string `json:"processor"`
 }
 
 type linkBlock struct {
@@ -1263,7 +1266,7 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 
 	var buf bytes.Buffer
 	for _, id := range root.ChildrenID {
-		renderBlock(&buf, byID, id, notes, fileObjects, 0)
+		renderBlock(&buf, byID, id, notes, fileObjects, 0, obj.ID)
 	}
 	return strings.TrimLeft(buf.String(), "\n")
 }
@@ -1386,14 +1389,19 @@ func collectTemplateRelationKeys(tmpl templateInfo) []string {
 	return ordered
 }
 
-func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int) {
+func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
 	b, ok := byID[id]
 	if !ok {
 		return
 	}
 
+	if b.Text != nil && (b.Text.Style == "Callout" || b.Text.Style == "Toggle") {
+		renderCalloutBlock(buf, byID, b, notes, fileObjects, depth, rootID)
+		return
+	}
+
 	if b.Text != nil {
-		line := renderTextBlock(*b.Text, depth)
+		line := renderTextBlock(*b.Text, depth, b.Fields)
 		if line != "" {
 			buf.WriteString(line)
 			if !strings.HasSuffix(line, "\n") {
@@ -1429,6 +1437,8 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	} else if b.Link != nil {
 		if note, ok := notes[b.Link.TargetBlockID]; ok {
 			buf.WriteString("[[" + note + "]]\n")
+		} else if date := linkTargetDate(b.Link.TargetBlockID); date != "" {
+			buf.WriteString(date + "\n")
 		}
 	} else if b.Table != nil {
 		table := renderTable(byID, b)
@@ -1439,14 +1449,23 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 			}
 		}
 		return
+	} else if b.Div != nil {
+		if divider := renderDivider(b.Div); divider != "" {
+			buf.WriteString(divider + "\n")
+		}
+	} else if b.TOC != nil {
+		toc := renderTableOfContents(byID, rootID)
+		if toc != "" {
+			buf.WriteString(toc)
+		}
 	}
 
 	for _, cid := range b.ChildrenID {
-		renderBlock(buf, byID, cid, notes, fileObjects, depth+1)
+		renderBlock(buf, byID, cid, notes, fileObjects, depth+1, rootID)
 	}
 }
 
-func renderTextBlock(t textBlock, depth int) string {
+func renderTextBlock(t textBlock, depth int, fields map[string]any) string {
 	text := strings.TrimRight(t.Text, "\n")
 	style := t.Style
 	indent := strings.Repeat("  ", max(0, depth-1))
@@ -1470,8 +1489,13 @@ func renderTextBlock(t textBlock, depth int) string {
 	case "Numbered":
 		return indent + "1. " + text + "\n"
 	case "Code":
-		return "```\n" + text + "\n```\n"
-	case "Quote", "Toggle":
+		code := strings.TrimLeft(text, "\n")
+		lang := strings.TrimSpace(asString(fields["lang"]))
+		if lang != "" {
+			return "```" + lang + "\n" + code + "\n```\n"
+		}
+		return "```\n" + code + "\n```\n"
+	case "Quote":
 		return "> " + strings.ReplaceAll(text, "\n", "\n> ") + "\n"
 	default:
 		if strings.TrimSpace(text) == "" {
@@ -1479,6 +1503,149 @@ func renderTextBlock(t textBlock, depth int) string {
 		}
 		return text + "\n"
 	}
+}
+
+func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes map[string]string, fileObjects map[string]string, depth int, rootID string) {
+	if b.Text == nil {
+		return
+	}
+	marker := "> [!note]"
+	if b.Text.Style == "Toggle" {
+		marker += "-"
+	}
+	title := strings.TrimSpace(b.Text.Text)
+	if title != "" {
+		marker += " " + title
+	}
+	buf.WriteString(marker + "\n")
+
+	var child bytes.Buffer
+	for _, cid := range b.ChildrenID {
+		renderBlock(&child, byID, cid, notes, fileObjects, depth+1, rootID)
+	}
+	body := strings.TrimRight(child.String(), "\n")
+	if body == "" {
+		return
+	}
+	buf.WriteString(prefixLines(body, "> "))
+	buf.WriteString("\n")
+}
+
+func prefixLines(s string, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = strings.TrimSpace(prefix)
+		} else {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderDivider(div map[string]any) string {
+	switch strings.ToLower(strings.TrimSpace(asString(div["style"]))) {
+	case "line":
+		return "---"
+	case "dots":
+		return "***"
+	default:
+		return ""
+	}
+}
+
+func renderTableOfContents(byID map[string]block, rootID string) string {
+	root, ok := byID[rootID]
+	if !ok {
+		return ""
+	}
+
+	type heading struct {
+		level int
+		text  string
+	}
+	headings := make([]heading, 0)
+	var visit func(string)
+	visit = func(id string) {
+		b, ok := byID[id]
+		if !ok {
+			return
+		}
+		if b.Text != nil {
+			if level := headingLevel(b.Text.Style); level > 0 {
+				text := strings.TrimSpace(b.Text.Text)
+				if text != "" {
+					headings = append(headings, heading{level: level, text: text})
+				}
+			}
+		}
+		for _, cid := range b.ChildrenID {
+			visit(cid)
+		}
+	}
+
+	for _, cid := range root.ChildrenID {
+		visit(cid)
+	}
+	if len(headings) == 0 {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	for _, h := range headings {
+		slug := headingSlug(h.text)
+		if slug == "" {
+			continue
+		}
+		indent := strings.Repeat("  ", max(0, h.level-1))
+		buf.WriteString(indent + "- [" + escapeBrackets(h.text) + "](#" + slug + ")\n")
+	}
+	return buf.String()
+}
+
+func headingLevel(style string) int {
+	switch style {
+	case "Header1", "ToggleHeader1":
+		return 1
+	case "Header2", "ToggleHeader2":
+		return 2
+	case "Header3", "ToggleHeader3":
+		return 3
+	case "Header4":
+		return 4
+	default:
+		return 0
+	}
+}
+
+func headingSlug(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastDash = false
+		case r == ' ' || r == '-':
+			if !lastDash {
+				b.WriteRune('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func linkTargetDate(target string) string {
+	const prefix = "_date_"
+	if strings.HasPrefix(target, prefix) {
+		return strings.TrimPrefix(target, prefix)
+	}
+	return ""
 }
 
 func renderTable(byID map[string]block, tableBlock block) string {

@@ -462,6 +462,70 @@ func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 	}
 }
 
+func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "blocks-page.pb.json"), "Page", map[string]any{
+		"id":   "blocks-page",
+		"name": "Blocks Page",
+	}, []map[string]any{
+		{"id": "blocks-page", "childrenIds": []string{"title", "h1", "h2", "toc", "line-divider", "dots-divider", "date-link", "code", "callout", "toggle"}},
+		{"id": "title", "text": map[string]any{"text": "Blocks Page", "style": "Title"}},
+		{"id": "h1", "text": map[string]any{"text": "Heading One", "style": "Header1"}},
+		{"id": "h2", "text": map[string]any{"text": "Heading Two", "style": "Header2"}},
+		{"id": "toc", "tableOfContents": map[string]any{}},
+		{"id": "line-divider", "div": map[string]any{"style": "Line"}},
+		{"id": "dots-divider", "div": map[string]any{"style": "Dots"}},
+		{"id": "date-link", "link": map[string]any{"targetBlockId": "_date_2026-02-04"}},
+		{"id": "code", "fields": map[string]any{"lang": "jsx"}, "text": map[string]any{"text": "\nconsole.log('lol')", "style": "Code"}},
+		{"id": "callout", "text": map[string]any{"text": "Callout title", "style": "Callout"}, "childrenIds": []string{"callout-body"}},
+		{"id": "callout-body", "text": map[string]any{"text": "inside callout", "style": "Paragraph"}},
+		{"id": "toggle", "text": map[string]any{"text": "Collapsed title", "style": "Toggle"}, "childrenIds": []string{"toggle-body"}},
+		{"id": "toggle-body", "text": map[string]any{"text": "inside toggle", "style": "Paragraph"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Blocks Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	if !strings.Contains(note, "- [Heading One](#heading-one)") || !strings.Contains(note, "- [Heading Two](#heading-two)") {
+		t.Fatalf("expected generated table of contents, got:\n%s", note)
+	}
+	if !strings.Contains(note, "---") {
+		t.Fatalf("expected line divider to render as horizontal rule, got:\n%s", note)
+	}
+	if !strings.Contains(note, "***") {
+		t.Fatalf("expected dots divider to render as horizontal rule, got:\n%s", note)
+	}
+	if !strings.Contains(note, "2026-02-04") {
+		t.Fatalf("expected date link target to render as date text, got:\n%s", note)
+	}
+	if !strings.Contains(note, "```jsx\nconsole.log('lol')\n```") {
+		t.Fatalf("expected code block with language, got:\n%s", note)
+	}
+	if !strings.Contains(note, "> [!note] Callout title\n> inside callout") {
+		t.Fatalf("expected callout block, got:\n%s", note)
+	}
+	if !strings.Contains(note, "> [!note]- Collapsed title\n> inside toggle") {
+		t.Fatalf("expected collapsed callout for toggle block, got:\n%s", note)
+	}
+}
+
 func TestExporterAppliesFilesystemTimestampsFromAnytypeDetails(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
