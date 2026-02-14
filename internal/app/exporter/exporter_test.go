@@ -506,6 +506,9 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
+	if strings.Contains(note, "# Blocks Page") {
+		t.Fatalf("expected root title block to be skipped in note body, got:\n%s", note)
+	}
 
 	if !strings.Contains(note, "- [Heading One](#heading-one)") || !strings.Contains(note, "- [Heading Two](#heading-two)") {
 		t.Fatalf("expected generated table of contents, got:\n%s", note)

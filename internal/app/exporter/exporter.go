@@ -1264,8 +1264,15 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 		return ""
 	}
 
+	children := root.ChildrenID
+	if len(children) > 0 {
+		if first, exists := byID[children[0]]; exists && first.Text != nil && first.Text.Style == "Title" {
+			children = children[1:]
+		}
+	}
+
 	var buf bytes.Buffer
-	renderChildren(&buf, byID, root.ChildrenID, notes, fileObjects, 0, obj.ID)
+	renderChildren(&buf, byID, children, notes, fileObjects, 0, obj.ID)
 	return strings.TrimLeft(buf.String(), "\n")
 }
 
