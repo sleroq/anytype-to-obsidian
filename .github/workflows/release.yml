@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "**"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing tag to release (example: v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.resolve.outputs.tag_name }}
+    steps:
+      - name: Resolve tag name
+        id: resolve
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            tag_name="${GITHUB_REF_NAME}"
+          else
+            tag_name="${{ inputs.tag_name }}"
+          fi
+
+          if [[ -z "${tag_name}" ]]; then
+            echo "Tag name is required."
+            exit 1
+          fi
+
+          echo "tag_name=${tag_name}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag_name }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bin_name="anytype-to-obsidian"
+          version="${{ needs.prepare.outputs.tag_name }}"
+          suffix="${{ matrix.goos }}_${{ matrix.goarch }}"
+          ext=""
+          archive_ext="tar.gz"
+
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            ext=".exe"
+            archive_ext="zip"
+          fi
+
+          if [[ "${{ matrix.goarch }}" == "arm" ]]; then
+            suffix="${suffix}v${{ matrix.goarm }}"
+          fi
+
+          artifact_name="${bin_name}_${version}_${suffix}"
+          output_dir="dist"
+          mkdir -p "${output_dir}"
+
+          export CGO_ENABLED=0
+          export GOOS="${{ matrix.goos }}"
+          export GOARCH="${{ matrix.goarch }}"
+
+          if [[ -n "${{ matrix.goarm || '' }}" ]]; then
+            export GOARM="${{ matrix.goarm }}"
+          fi
+
+          binary_path="${output_dir}/${bin_name}${ext}"
+          go build -trimpath -ldflags "-s -w" -o "${binary_path}" ./cmd/anytype-to-obsidian
+
+          archive_path="${output_dir}/${artifact_name}.${archive_ext}"
+          if [[ "${archive_ext}" == "zip" ]]; then
+            (
+              cd "${output_dir}"
+              zip -q "${artifact_name}.${archive_ext}" "${bin_name}${ext}"
+            )
+          else
+            tar -C "${output_dir}" -czf "${archive_path}" "${bin_name}${ext}"
+          fi
+
+          rm -f "${binary_path}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('-v{0}', matrix.goarm) || '' }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          name: ${{ needs.prepare.outputs.tag_name }}
+          files: release-artifacts/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
