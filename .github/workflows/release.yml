@@ -71,7 +71,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build archive
+      - name: Build binary
         shell: bash
         run: |
           set -euo pipefail
@@ -80,11 +80,9 @@ jobs:
           version="${{ needs.prepare.outputs.tag_name }}"
           suffix="${{ matrix.goos }}_${{ matrix.goarch }}"
           ext=""
-          archive_ext="tar.gz"
 
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
             ext=".exe"
-            archive_ext="zip"
           fi
 
           if [[ "${{ matrix.goarch }}" == "arm" ]]; then
@@ -103,20 +101,8 @@ jobs:
             export GOARM="${{ matrix.goarm }}"
           fi
 
-          binary_path="${output_dir}/${bin_name}${ext}"
+          binary_path="${output_dir}/${artifact_name}${ext}"
           go build -trimpath -ldflags "-s -w" -o "${binary_path}" ./cmd/anytype-to-obsidian
-
-          archive_path="${output_dir}/${artifact_name}.${archive_ext}"
-          if [[ "${archive_ext}" == "zip" ]]; then
-            (
-              cd "${output_dir}"
-              zip -q "${artifact_name}.${archive_ext}" "${bin_name}${ext}"
-            )
-          else
-            tar -C "${output_dir}" -czf "${archive_path}" "${bin_name}${ext}"
-          fi
-
-          rm -f "${binary_path}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
