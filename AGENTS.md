@@ -61,6 +61,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
 
 3. Block conversion
    - text -> markdown text/styles.
+   - Anytype system title blocks can be nested inside a `layout.style: Header` container; skip `text.style: Title` blocks with `fields._detailsKey` containing `name` to avoid duplicate `#` heading at note start.
    - `Numbered` list numbering must be sequential per sibling run (`1.`, `2.`, `3.`), reset after non-numbered sibling, with nested runs counted independently.
    - Nested markdown list indentation should use tabs (`\t`) instead of spaces for `Checkbox` / `Marked` / `Numbered` blocks and generated TOC lists.
    - code text blocks use `fields.lang` for fenced code language (for example, `jsx`).
@@ -75,6 +76,7 @@ we need to cover our exporter's features with tests so we can make sure we suppo
    - template relation blocks (`blocks[*].relation.key`) -> template frontmatter keys when exporting files from `templates/`.
    - table block -> markdown table (best effort).
    - blocks with `dataview` payload should additionally export Obsidian `.base` files into `bases/` with per-view filters/sorts/grouping.
+   - For dataview views, `views[*].relations[*].isVisible=true` defines selected properties shown in Obsidian base `order`; if `relations` are absent, fallback to sort-derived `order`.
    - for Anytype date filters, quick options and `includeTime=false` follow `anytype-heart/pkg/lib/database/quickoptions.go` transformation rules before rendering to base expressions.
    - unsupported block -> skip (no fallback snippet yet).
 

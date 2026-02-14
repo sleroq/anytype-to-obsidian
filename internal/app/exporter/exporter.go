@@ -1410,6 +1410,7 @@ type baseViewSpec struct {
 	GroupBy *baseGroupSpec
 	Filters *baseFilterNode
 	Order   []string
+	Select  []string
 	Sort    []baseSortSpec
 }
 
@@ -1473,9 +1474,13 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 			buf.WriteString("    filters:\n")
 			writeBaseFilterNode(&buf, *v.Filters, 3)
 		}
-		if len(v.Order) > 0 {
+		order := v.Select
+		if len(order) == 0 {
+			order = v.Order
+		}
+		if len(order) > 0 {
 			buf.WriteString("    order:\n")
-			for _, prop := range v.Order {
+			for _, prop := range order {
 				buf.WriteString("      - ")
 				writeYAMLString(&buf, prop)
 				buf.WriteString("\n")
@@ -1546,6 +1551,35 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 
 		view := baseViewSpec{Type: viewType, Name: name}
 		view.Limit = asInt(anyMapGet(viewMap, "pageLimit", "PageLimit"))
+
+		relationsRaw := asAnySlice(anyMapGet(viewMap, "relations", "Relations"))
+		view.Select = make([]string, 0, len(relationsRaw))
+		selectedSeen := make(map[string]struct{}, len(relationsRaw))
+		for _, relationRaw := range relationsRaw {
+			relationMap, ok := relationRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			visible := true
+			if rawVisible, ok := relationMap["isVisible"]; ok {
+				visible = asBool(rawVisible)
+			} else if rawVisible, ok := relationMap["IsVisible"]; ok {
+				visible = asBool(rawVisible)
+			}
+			if !visible {
+				continue
+			}
+			relationKey := asString(anyMapGet(relationMap, "key", "Key"))
+			property := basePropertyPath(relationKey, relations)
+			if property == "" {
+				continue
+			}
+			if _, exists := selectedSeen[property]; exists {
+				continue
+			}
+			selectedSeen[property] = struct{}{}
+			view.Select = append(view.Select, property)
+		}
 
 		sortsRaw := asAnySlice(anyMapGet(viewMap, "sorts", "Sorts"))
 		view.Order = make([]string, 0, len(sortsRaw))
@@ -2102,6 +2136,10 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		return
 	}
 
+	if isSystemTitleBlock(b) {
+		return
+	}
+
 	if b.Text != nil && (b.Text.Style == "Callout" || b.Text.Style == "Toggle") {
 		renderCalloutBlock(buf, byID, b, notes, fileObjects, depth, rootID)
 		return
@@ -2168,6 +2206,18 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 	}
 
 	renderChildren(buf, byID, b.ChildrenID, notes, fileObjects, depth+1, rootID)
+}
+
+func isSystemTitleBlock(b block) bool {
+	if b.Text == nil || b.Text.Style != "Title" {
+		return false
+	}
+	for _, key := range anyToStringSlice(b.Fields["_detailsKey"]) {
+		if strings.EqualFold(strings.TrimSpace(key), "name") {
+			return true
+		}
+	}
+	return false
 }
 
 func renderTextBlock(t textBlock, depth int, fields map[string]any, numberedIndex int) string {

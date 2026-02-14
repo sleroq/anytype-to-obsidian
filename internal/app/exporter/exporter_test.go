@@ -536,6 +536,46 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	}
 }
 
+func TestExporterSkipsSystemTitleInsideHeaderLayout(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "header-page.pb.json"), "Page", map[string]any{
+		"id":   "header-page",
+		"name": "Header Page",
+	}, []map[string]any{
+		{"id": "header-page", "childrenIds": []string{"header", "content"}},
+		{"id": "header", "layout": map[string]any{"style": "Header"}, "childrenIds": []string{"title", "description"}},
+		{"id": "title", "fields": map[string]any{"_detailsKey": []any{"name"}}, "text": map[string]any{"text": "Header Page", "style": "Title"}},
+		{"id": "description", "fields": map[string]any{"_detailsKey": "description"}, "text": map[string]any{"text": "", "style": "Description"}},
+		{"id": "content", "text": map[string]any{"text": "Body paragraph", "style": "Paragraph"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Header Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if strings.Contains(note, "\n# Header Page\n") || strings.Contains(note, "\n# \n") {
+		t.Fatalf("expected system title block to be skipped in note body, got:\n%s", note)
+	}
+	if !strings.Contains(note, "Body paragraph") {
+		t.Fatalf("expected body content to be rendered, got:\n%s", note)
+	}
+}
+
 func TestExporterAppliesFilesystemTimestampsFromAnytypeDetails(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -1314,6 +1354,12 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 		"relationFormat": 3,
 		"name":           "Task Type",
 	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-due-date.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-due-date",
+		"relationKey":    "dueDate",
+		"relationFormat": 4,
+		"name":           "Due Date",
+	}, nil)
 
 	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-task-type-focus.pb.json"), "STRelationOption", map[string]any{
 		"id":   "opt-task-type-focus",
@@ -1336,6 +1382,12 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 					"id":   "view-1",
 					"type": "Kanban",
 					"name": "All",
+					"relations": []any{
+						map[string]any{"key": "name", "isVisible": true},
+						map[string]any{"key": "tag", "isVisible": true},
+						map[string]any{"key": "dueDate", "isVisible": true},
+						map[string]any{"key": "status", "isVisible": false},
+					},
 					"sorts": []any{
 						map[string]any{"RelationKey": "lastModifiedDate", "type": "Desc", "format": "date", "includeTime": true, "emptyPlacement": "NotSpecified", "noCollate": false},
 						map[string]any{"RelationKey": "createdDate", "type": "Desc", "format": "date", "includeTime": true, "emptyPlacement": "Start", "noCollate": true},
@@ -1365,8 +1417,14 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 	if !strings.Contains(base, "views:") || !strings.Contains(base, "name: \"All\"") {
 		t.Fatalf("expected base views to be rendered, got:\n%s", base)
 	}
-	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.mtime\"") || !strings.Contains(base, "\"file.ctime\"") {
-		t.Fatalf("expected created/modified sorts mapped to file properties, got:\n%s", base)
+	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.name\"") || !strings.Contains(base, "\"note.tag\"") || !strings.Contains(base, "\"note.dueDate\"") {
+		t.Fatalf("expected selected properties mapped into view order, got:\n%s", base)
+	}
+	if strings.Contains(base, "\n      - \"note.status\"\n") {
+		t.Fatalf("expected hidden relation to be excluded from selected properties, got:\n%s", base)
+	}
+	if !strings.Contains(base, "sort:") || !strings.Contains(base, "property: \"file.mtime\"") || !strings.Contains(base, "property: \"file.ctime\"") {
+		t.Fatalf("expected created/modified sorts mapped into sort metadata, got:\n%s", base)
 	}
 	if !strings.Contains(base, "groupBy:") || !strings.Contains(base, "\"note.status\"") {
 		t.Fatalf("expected groupBy to be rendered, got:\n%s", base)
