@@ -563,8 +563,34 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 		writeYAMLKeyValue(&buf, outKey, converted)
 	}
 
+	if banner, ok := coverBannerValue(obj.Details, fileObjects); ok {
+		if _, exists := usedKeys["banner"]; !exists {
+			usedKeys["banner"] = struct{}{}
+			writeYAMLKeyValue(&buf, "banner", banner)
+		}
+	}
+
 	buf.WriteString("---\n\n")
 	return buf.String()
+}
+
+func coverBannerValue(details map[string]any, fileObjects map[string]string) (string, bool) {
+	coverID := strings.TrimSpace(asString(details["coverId"]))
+	if coverID == "" {
+		return "", false
+	}
+
+	coverSource := strings.TrimSpace(fileObjects[coverID])
+	if coverSource == "" {
+		return "", false
+	}
+
+	banner := strings.TrimSpace(filepath.Base(filepath.ToSlash(coverSource)))
+	if banner == "" {
+		return "", false
+	}
+
+	return "[[" + banner + "]]", true
 }
 
 func orderedFrontmatterKeys(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef) ([]string, map[string]bool, map[string]bool) {

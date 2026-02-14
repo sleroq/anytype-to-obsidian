@@ -523,6 +523,52 @@ func TestExporterCanDisablePictureToCoverRename(t *testing.T) {
 	}
 }
 
+func TestExporterAddsBannerFromCoverImage(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "filesObjects", "cover-file.pb.json"), "FileObject", map[string]any{
+		"id":      "cover-file",
+		"name":    "youtube_com_cover_x",
+		"fileExt": "jpg",
+		"source":  "files/youtube_com_cover_x.jpg",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":        "obj-1",
+		"name":      "Task One",
+		"coverId":   "cover-file",
+		"coverType": 1,
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "banner: \"[[youtube_com_cover_x.jpg]]\"") {
+		t.Fatalf("expected banner to be exported from cover image, got:\n%s", note)
+	}
+	if strings.Contains(note, "coverId:") {
+		t.Fatalf("expected coverId to stay hidden, got:\n%s", note)
+	}
+}
+
 func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
