@@ -29,6 +29,7 @@ type Exporter struct {
 	InputDir                  string
 	OutputDir                 string
 	DisableIconizeIcons       bool
+	DisablePictureToCover     bool
 	RunPrettier               bool
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
@@ -412,7 +413,7 @@ Can I delete this folder?
 
 	usedBaseNames := map[string]int{}
 	for _, obj := range objects {
-		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects)
+		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects, !e.DisablePictureToCover)
 		if !ok {
 			progressBar.Advance("exporting bases")
 			continue
@@ -444,7 +445,7 @@ Can I delete this folder?
 		if err := os.MkdirAll(filepath.Dir(templateAbsPath), 0o755); err != nil {
 			return Stats{}, err
 		}
-		content := renderTemplate(tmpl, relations, typesByID, idToObject, notePathByID, fileObjects)
+		content := renderTemplate(tmpl, relations, typesByID, idToObject, notePathByID, fileObjects, !e.DisablePictureToCover)
 		if err := os.WriteFile(templateAbsPath, []byte(content), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write template %s: %w", tmpl.ID, err)
 		}
@@ -473,6 +474,7 @@ Can I delete this folder?
 			e.IncludeDynamicProperties,
 			e.IncludeArchivedProperties,
 			filters,
+			!e.DisablePictureToCover,
 		)
 		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
@@ -527,7 +529,7 @@ func tryRunPrettier(outputDir string) error {
 	return prettierCommandRunner(outputDir)
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters, pictureToCover bool) string {
 	keys, includeByType, dateByType := orderedFrontmatterKeys(obj, relations, typesByID)
 
 	var buf bytes.Buffer
@@ -553,7 +555,7 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 		if filters.excludeEmpty && isEmptyFrontmatterValue(converted) {
 			continue
 		}
-		outKey := frontmatterKey(k, rel, hasRel)
+		outKey := frontmatterKey(k, rel, hasRel, pictureToCover)
 		if _, exists := usedKeys[outKey]; exists {
 			outKey = k
 		}
@@ -765,7 +767,10 @@ func shouldIncludeFrontmatterProperty(rawKey string, rel relationDef, hasRel boo
 	return true
 }
 
-func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
+func frontmatterKey(rawKey string, rel relationDef, hasRel bool, pictureToCover bool) string {
+	if pictureToCover && isPictureProperty(rawKey, rel, hasRel) {
+		return "cover"
+	}
 	if isTagProperty(rawKey, rel, hasRel) {
 		return "tags"
 	}
@@ -782,6 +787,16 @@ func frontmatterKey(rawKey string, rel relationDef, hasRel bool) string {
 		return rel.Name
 	}
 	return rawKey
+}
+
+func isPictureProperty(rawKey string, rel relationDef, hasRel bool) bool {
+	if normalizePropertyKey(rawKey) == "picture" {
+		return true
+	}
+	if !hasRel {
+		return false
+	}
+	return normalizePropertyKey(rel.Key) == "picture"
 }
 
 func isTagProperty(rawKey string, rel relationDef, hasRel bool) bool {
@@ -1214,7 +1229,7 @@ func renderChildren(buf *bytes.Buffer, byID map[string]block, children []string,
 	}
 }
 
-func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesByID map[string]typeDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string) string {
+func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesByID map[string]typeDef, objects map[string]objectInfo, notes map[string]string, fileObjects map[string]string, pictureToCover bool) string {
 	typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
 	keys := collectTemplateRelationKeys(tmpl)
 
@@ -1231,7 +1246,7 @@ func renderTemplate(tmpl templateInfo, relations map[string]relationDef, typesBy
 	used := map[string]struct{}{}
 	for _, raw := range keys {
 		rel, hasRel := relations[raw]
-		outKey := frontmatterKey(raw, rel, hasRel)
+		outKey := frontmatterKey(raw, rel, hasRel, pictureToCover)
 		if outKey == "" {
 			outKey = raw
 		}
@@ -1325,13 +1340,13 @@ type baseFilterNode struct {
 	Items []baseFilterNode
 }
 
-func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) (string, bool) {
+func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) (string, bool) {
 	var views []baseViewSpec
 	for _, b := range obj.Blocks {
 		if len(b.Dataview) == 0 {
 			continue
 		}
-		parsed := parseDataviewViews(b.Dataview, relations, optionNamesByID, notes, objectNamesByID, fileObjects)
+		parsed := parseDataviewViews(b.Dataview, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover)
 		views = append(views, parsed...)
 	}
 	if len(views) == 0 {
@@ -1416,7 +1431,7 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 	return buf.String(), true
 }
 
-func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) []baseViewSpec {
+func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) []baseViewSpec {
 	viewsRaw := asAnySlice(raw["views"])
 	out := make([]baseViewSpec, 0, len(viewsRaw))
 	for _, viewRaw := range viewsRaw {
@@ -1464,7 +1479,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 				continue
 			}
 			relationKey := asString(anyMapGet(relationMap, "key", "Key"))
-			property := basePropertyPath(relationKey, relations)
+			property := basePropertyPath(relationKey, relations, pictureToCover)
 			if property == "" {
 				continue
 			}
@@ -1484,7 +1499,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 				continue
 			}
 			relationKey := asString(anyMapGet(sortMap, "RelationKey", "relationKey"))
-			property := basePropertyPath(relationKey, relations)
+			property := basePropertyPath(relationKey, relations, pictureToCover)
 			if property == "" {
 				continue
 			}
@@ -1511,7 +1526,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 			if len(view.Sort) > 0 && strings.TrimSpace(view.Sort[0].Direction) != "" {
 				direction = view.Sort[0].Direction
 			}
-			view.GroupBy = &baseGroupSpec{Property: basePropertyPath(groupKey, relations), Direction: direction}
+			view.GroupBy = &baseGroupSpec{Property: basePropertyPath(groupKey, relations, pictureToCover), Direction: direction}
 		}
 
 		filterNodes := make([]baseFilterNode, 0)
@@ -1520,7 +1535,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 			if !ok {
 				continue
 			}
-			if node, ok := convertAnytypeFilterNode(filterMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects); ok {
+			if node, ok := convertAnytypeFilterNode(filterMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover); ok {
 				filterNodes = append(filterNodes, node)
 			}
 		}
@@ -1566,7 +1581,7 @@ func writeBaseFilterNode(buf *bytes.Buffer, node baseFilterNode, indent int) {
 	}
 }
 
-func convertAnytypeFilterNode(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) (baseFilterNode, bool) {
+func convertAnytypeFilterNode(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) (baseFilterNode, bool) {
 	op := strings.TrimSpace(strings.ToLower(asString(anyMapGet(raw, "operator", "Operator"))))
 	nestedRaw := asAnySlice(anyMapGet(raw, "nestedFilters", "NestedFilters"))
 	if op == "and" || op == "or" {
@@ -1576,7 +1591,7 @@ func convertAnytypeFilterNode(raw map[string]any, relations map[string]relationD
 			if !ok {
 				continue
 			}
-			if node, ok := convertAnytypeFilterNode(nestedMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects); ok {
+			if node, ok := convertAnytypeFilterNode(nestedMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover); ok {
 				items = append(items, node)
 			}
 		}
@@ -1592,7 +1607,7 @@ func convertAnytypeFilterNode(raw map[string]any, relations map[string]relationD
 			if !ok {
 				continue
 			}
-			if node, ok := convertAnytypeFilterNode(nestedMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects); ok {
+			if node, ok := convertAnytypeFilterNode(nestedMap, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover); ok {
 				items = append(items, node)
 			}
 		}
@@ -1604,14 +1619,14 @@ func convertAnytypeFilterNode(raw map[string]any, relations map[string]relationD
 		}
 	}
 
-	expr := buildFilterExpression(raw, relations, optionNamesByID, notes, objectNamesByID, fileObjects)
+	expr := buildFilterExpression(raw, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover)
 	if strings.TrimSpace(expr) == "" {
 		return baseFilterNode{}, false
 	}
 	return baseFilterNode{Expr: expr}, true
 }
 
-func buildFilterExpression(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) string {
+func buildFilterExpression(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) string {
 	relationKey := strings.TrimSpace(asString(anyMapGet(raw, "RelationKey", "relationKey")))
 	if relationKey == "" {
 		return ""
@@ -1620,7 +1635,7 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 	if condition == "" {
 		return ""
 	}
-	prop := basePropertyPath(relationKey, relations)
+	prop := basePropertyPath(relationKey, relations, pictureToCover)
 	if prop == "" {
 		return ""
 	}
@@ -1932,7 +1947,7 @@ func mappedToString(value any) string {
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func basePropertyPath(rawKey string, relations map[string]relationDef) string {
+func basePropertyPath(rawKey string, relations map[string]relationDef, pictureToCover bool) string {
 	rawKey = strings.TrimSpace(rawKey)
 	if rawKey == "" {
 		return ""
@@ -1946,7 +1961,7 @@ func basePropertyPath(rawKey string, relations map[string]relationDef) string {
 		return "file.mtime"
 	}
 	rel, hasRel := relations[rawKey]
-	frontKey := frontmatterKey(rawKey, rel, hasRel)
+	frontKey := frontmatterKey(rawKey, rel, hasRel, pictureToCover)
 	if frontKey == "" {
 		frontKey = rawKey
 	}

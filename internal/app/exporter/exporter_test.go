@@ -392,6 +392,82 @@ func TestExporterExcludesEmptyPropertiesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestExporterRenamesPicturePropertyToCoverByDefault(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":      "obj-1",
+		"name":    "Task One",
+		"picture": "files/cover.png",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "cover: \"files/cover.png\"") {
+		t.Fatalf("expected picture to be exported as cover, got:\n%s", note)
+	}
+	if strings.Contains(note, "picture:") {
+		t.Fatalf("expected picture key to be renamed by default, got:\n%s", note)
+	}
+}
+
+func TestExporterCanDisablePictureToCoverRename(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":      "obj-1",
+		"name":    "Task One",
+		"picture": "files/cover.png",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, DisablePictureToCover: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "picture: \"files/cover.png\"") {
+		t.Fatalf("expected picture key when rename is disabled, got:\n%s", note)
+	}
+	if strings.Contains(note, "cover:") {
+		t.Fatalf("expected cover key to be absent when rename is disabled, got:\n%s", note)
+	}
+}
+
 func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -1505,7 +1581,7 @@ func TestParseDataviewViewsMapsGalleryToCards(t *testing.T) {
 				"name": "All",
 			},
 		},
-	}, nil, nil, nil, nil, nil)
+	}, nil, nil, nil, nil, nil, false)
 
 	if len(views) != 1 {
 		t.Fatalf("expected one view, got %d", len(views))
@@ -1555,7 +1631,7 @@ func TestBuildFilterExpressionSupportsAllAnytypeConditions(t *testing.T) {
 			"condition":   condition,
 			"value":       value,
 			"format":      "status",
-		}, relations, optionsByID, nil, nil, nil)
+		}, relations, optionsByID, nil, nil, nil, false)
 		if strings.TrimSpace(expr) == "" {
 			t.Fatalf("expected non-empty expression for condition %s", condition)
 		}

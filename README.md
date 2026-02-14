@@ -8,6 +8,7 @@ Convert Anytype JSON Export into Obsidian Markdown with relations and metadata p
 - Anytype queries/dataviews are converted into Obsidian Bases (`.base`) files.
 - Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
 - Select-like values (for example `tag`, `status`, `type`) can be exported as linked objects/notes when needed.
+- Pretty Properties plugin integration. Compatible properties are converted and renamed.
 - Anytype templates are exported.
 - Iconize plugin integration: `iconEmoji`/`iconImage` are exported to `.obsidian/plugins/obsidian-icon-folder/data.json` (with generated icon pack files for image icons).
 - Anytype -> Obsidian block conversion is fully supported in this project scope; if you find an unsupported block, please open an issue.
@@ -49,6 +50,7 @@ go run ./cmd/anytype-to-obsidian -input ./Anytype-exported-json -output ./result
 - `-exclude-properties`: comma-separated property keys/names to exclude.
 - `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.
 - `-link-as-note-properties`: comma-separated relation keys/names to export as note links (for example `type,tag,status`).
+- `-disable-picture-to-cover`: keep the original `picture` property name instead of exporting it as `cover`.
 - `-disable-iconize-icons`: disable Iconize plugin data/icon export.
 
 Property precedence:
