@@ -61,4 +61,3 @@
 - Prefer small local fixes over big refactors.
 - Do not add new dependencies unless explicitly requested.
 - `map[string]any` is acceptable for dynamic Anytype payload parts.
-- Write all code comments and log messages in Russian.

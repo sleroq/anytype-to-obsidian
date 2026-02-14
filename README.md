@@ -1,8 +1,8 @@
 # anytype-to-obsidian
 
-Export Anytype JSON (`Anytype-json`) to an Obsidian vault with relations and metadata preserved.
+Convert Anytype JSON Export into Obsidian Markdown with relations and metadata preserved.
 
-## What this exporter focuses on
+## Features
 
 - Relations are exported correctly (object links, tags, statuses, files, types, multi-selects).
 - Anytype queries/dataviews are converted into Obsidian Bases (`.base`) files.
@@ -27,7 +27,7 @@ This opens a setup form and uses these defaults:
 Or run directly with flags:
 
 ```bash
-go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault
+go run ./cmd/anytype-to-obsidian -input ./Anytype-exported-json -output ./result-directory
 ```
 
 ## Main options
