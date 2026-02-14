@@ -58,11 +58,37 @@ type indexFile struct {
 }
 
 var prettierCommandRunner = func(outputDir string) error {
-	cmd := exec.Command("npx", "--yes", "prettier", "--write", "--ignore-unknown", ".")
+	targets := make([]string, 0, 3)
+	for _, dir := range []string{"notes", "bases", "templates"} {
+		abs := filepath.Join(outputDir, dir)
+		info, err := os.Stat(abs)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if info.IsDir() {
+			targets = append(targets, dir)
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	args := []string{"--yes", "prettier", "--no-config", "--write", "--ignore-unknown"}
+	args = append(args, targets...)
+	cmd := exec.Command("npx", args...)
 	cmd.Dir = outputDir
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, msg)
 }
 
 var dynamicPropertyKeys = map[string]struct{}{
