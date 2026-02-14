@@ -100,6 +100,7 @@ var defaultHiddenPropertyKeys = map[string]struct{}{
 	"anytype_template_id":    {},
 	"anytype_target_type_id": {},
 	"anytype_target_type":    {},
+	"sourceFilePath":         {},
 }
 
 type propertyFilters struct {
