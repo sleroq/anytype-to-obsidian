@@ -121,7 +121,7 @@ func TestExporterPreservesRelationsAndFields(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "related: \"[[./Task Two.md]]\"") {
+	if !strings.Contains(note, "related: \"[[Task Two.md]]\"") {
 		t.Fatalf("expected related object relation to be rendered, got:\n%s", note)
 	}
 	if !strings.Contains(note, "status: \"Doing\"") {
@@ -309,7 +309,7 @@ func TestExporterSupportsPropertyIncludeExcludeOverrides(t *testing.T) {
 	if !strings.Contains(note, "layout: \"note\"") {
 		t.Fatalf("expected layout to be force-included, got:\n%s", note)
 	}
-	if !strings.Contains(note, "backlinks: \"[[./Task Two.md]]\"") {
+	if !strings.Contains(note, "backlinks: \"[[Task Two.md]]\"") {
 		t.Fatalf("expected force-include to win over exclude for backlinks, got:\n%s", note)
 	}
 	if strings.Contains(note, "custom:") {
@@ -450,7 +450,7 @@ func TestExporterRendersTableAndFileBookmark(t *testing.T) {
 	if !strings.Contains(note, "| h1 | h2 |") || !strings.Contains(note, "| v1 | v2 |") {
 		t.Fatalf("expected markdown table, got:\n%s", note)
 	}
-	if !strings.Contains(note, "[sample.txt](files/sample.txt)") {
+	if !strings.Contains(note, "[sample.txt](../files/sample.txt)") {
 		t.Fatalf("expected file link, got:\n%s", note)
 	}
 	if !strings.Contains(note, "[Example](https://example.com)") {
@@ -586,7 +586,7 @@ func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "Hello [[./Anastasiya Pervusheva.md]]!") {
+	if !strings.Contains(note, "Hello [[Anastasiya Pervusheva.md]]!") {
 		t.Fatalf("expected mention mark to render note link, got:\n%s", note)
 	}
 }
@@ -877,7 +877,7 @@ func TestExporterCanLinkTypePropertyAsNoteAndCreatesTypeNote(t *testing.T) {
 		t.Fatalf("read person note: %v", err)
 	}
 	personNote := string(personNoteBytes)
-	if !strings.Contains(personNote, "type: \"[[./Human.md]]\"") {
+	if !strings.Contains(personNote, "type: \"[[Human.md]]\"") {
 		t.Fatalf("expected type property to be rendered as note link, got:\n%s", personNote)
 	}
 
@@ -936,7 +936,7 @@ func TestExporterCanLinkTagPropertyAsNoteAndCreatesOptionNote(t *testing.T) {
 		t.Fatalf("read page note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "tag: \"[[./go.md]]\"") {
+	if !strings.Contains(note, "tag: \"[[go.md]]\"") {
 		t.Fatalf("expected tag property to be rendered as note link, got:\n%s", note)
 	}
 
@@ -1348,7 +1348,7 @@ func TestExporterBuildsFilePathFromFileObjectWhenSourceIsMissing(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if !strings.Contains(note, "[Report.pdf](files/Report.pdf)") {
+	if !strings.Contains(note, "[Report.pdf](../files/Report.pdf)") {
 		t.Fatalf("expected file link to use synthesized files path, got:\n%s", note)
 	}
 }

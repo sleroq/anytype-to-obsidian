@@ -715,7 +715,7 @@ func convertPropertyValue(key string, value any, relations map[string]relationDe
 		out := make([]string, 0, len(ids))
 		for _, id := range ids {
 			if src, ok := fileObjects[id]; ok {
-				out = append(out, src)
+				out = append(out, relativePathTarget(sourceNotePath, src))
 			} else {
 				out = append(out, id)
 			}
@@ -1844,6 +1844,7 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		if path == "" {
 			path = filepath.ToSlash(filepath.Join("files", sanitizeName(strings.TrimSpace(b.File.Name), "posix")))
 		}
+		path = relativePathTarget(sourceNotePath, path)
 		if strings.EqualFold(b.File.Type, "image") {
 			buf.WriteString("![" + escapeBrackets(b.File.Name) + "](" + path + ")\n")
 		} else {
@@ -2153,25 +2154,29 @@ func linkTargetDate(target string) string {
 }
 
 func relativeWikiTarget(sourceNotePath string, targetNotePath string) string {
-	targetNotePath = filepath.ToSlash(strings.TrimSpace(targetNotePath))
-	if targetNotePath == "" {
+	return relativePathTarget(sourceNotePath, targetNotePath)
+}
+
+func relativePathTarget(sourcePath string, targetPath string) string {
+	targetPath = filepath.ToSlash(strings.TrimSpace(targetPath))
+	if targetPath == "" {
 		return ""
 	}
-	sourceNotePath = filepath.ToSlash(strings.TrimSpace(sourceNotePath))
-	if sourceNotePath == "" {
-		return targetNotePath
+	sourcePath = filepath.ToSlash(strings.TrimSpace(sourcePath))
+	if sourcePath == "" {
+		return targetPath
 	}
 
-	sourceDir := filepath.ToSlash(filepath.Dir(sourceNotePath))
-	rel, err := filepath.Rel(sourceDir, targetNotePath)
-	if err != nil || strings.TrimSpace(rel) == "" {
-		return targetNotePath
+	sourceDir := filepath.ToSlash(filepath.Dir(sourcePath))
+	rel, err := filepath.Rel(sourceDir, targetPath)
+	if err != nil {
+		return targetPath
 	}
-	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "./") || strings.HasPrefix(rel, "../") {
-		return rel
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	if rel == "" || rel == "." {
+		return targetPath
 	}
-	return "./" + rel
+	return rel
 }
 
 func renderTable(byID map[string]block, tableBlock block) string {
