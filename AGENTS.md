@@ -1,167 +1,64 @@
-# Project info
+# anytype-to-obsidian: implementation notes
 
-We are creating anytype-to-obsidian exporter. Anytype's exports are in ./Anytype-md/ and ./Anytype-json/ folders. Anytype-md is mostly useless as it's losing data as multi-selects and relations
+## Goal
 
-We need to read exported data from Anytype-json and create exporter which:
+- Source of truth is `Anytype-json` (not `Anytype-md`).
+- Export to Obsidian with correct relations, properties, blocks, templates, and query -> `.base` conversion.
 
-- preserves all of the relations between the objects
-- preserves all of the fields, including multi-selects and selects with objects
-- preserves tables and embeds if it's possible to convert them to obsidian alternative
+## Important data layout
 
-You have anytype-mcp connected so you can query production anytype server which has saygex space, identical to the exports. So we can compare the data if needed.
+- `Anytype-json/objects` - main objects.
+- `Anytype-json/relations` - relation defs (`relationKey`, `relationFormat`).
+- `Anytype-json/relationsOptions` - options for tag/status-like relations.
+- `Anytype-json/types` - type objects.
+- `Anytype-json/templates` - templates.
+- `Anytype-json/filesObjects` + `Anytype-json/files` - file metadata and binaries.
 
-in the anytype-heart folder we have anytype's backend which might be helpful to understand how export is created ./anytype-heart/core/block/export/export.go and how to parse the json / what types to infer so we don't reinvent them
+## Core code paths
 
-we need to cover our exporter's features with tests so we can make sure we support properties mentioned above
+- `cmd/anytype-to-obsidian/main.go` - CLI flags + interactive mode (no args).
+- `internal/app/exporter/exporter.go` - main export pipeline and mapping.
+- `internal/app/exporter/*_test.go` - behavior tests.
+- `internal/infra/anytypejson` - Anytype JSON parsing.
+- `internal/domain` - conversion/value helpers.
 
-## Context
+## Rules that matter for new features
 
-- Source of truth: `Anytype-json`.
-- `Anytype-md` is intentionally not used due to data loss.
-- Target: Obsidian-compatible markdown + filesystem assets.
+- Resolve object detail keys both by relation key and relation object ID.
+- Keep raw values when metadata is missing (do not drop unknown data).
+- For `type` relation values, support IDs from `types/*.pb.json` as fallback.
+- `link-as-note-properties` can force values like `type,tag,status` to be note links.
+- Dataview/query blocks must export to `bases/*.base` with filters/sort/group/order.
+- File names must be deterministic and collision-safe (`name.md`, `name-2.md`, ...).
+- Apply Anytype timestamps to exported files (`mtime`/`atime`; macOS birthtime when available).
 
-## Key Anytype Export Facts
+## Output contract
 
-- Files are protobuf-snapshot JSON (`.pb.json`).
-- Entity folders:
-  - `objects/` - regular content objects.
-  - `relations/` - relation definitions (`relationKey`, `relationFormat`).
-  - `relationsOptions/` - options for tag/status-like relations.
-  - `types/` - object type definitions.
-  - `templates/` - template objects.
-  - `filesObjects/` - file object metadata.
-  - `files/` - binary file assets.
+- `notes/*.md`
+- `templates/*.md`
+- `bases/*.base`
+- `files/*`
+- `_anytype/index.json`
+- `_anytype/raw/*.json`
 
-## DDD Shape (lightweight)
+## Verification commands
 
-- `internal/domain`: entities + value conversion rules.
-- `internal/infra/anytypejson`: export reader/parser.
-- `internal/app/exporter`: orchestration and markdown projection.
-- `cmd/anytype-to-obsidian`: CLI entrypoint.
+- Preferred full check: `go test ./cmd/... ./internal/...`
+- Exporter tests only: `go test ./internal/app/exporter`
+- Single test: `go test ./internal/app/exporter -run '^TestName$' -v`
+- Vet: `go vet ./...`
 
-## Mapping Rules (may be changed later)
+## Feature areas to protect with tests
 
-1. Build indexes
-   - object id -> object snapshot
-   - relation key -> relation definition
-   - relation option id -> option object
-   - file object id -> source file path
+- Relation mapping (object/tag/status/type/file).
+- Multi-select/select preservation.
+- Query/dataview -> `.base` conversion.
+- Table/file/bookmark/link block conversion.
+- Deterministic naming and frontmatter filtering behavior.
 
-2. Property conversion
-   - Some object details keys use relation object IDs instead of `relationKey`; resolve via relation index before filtering/mapping.
-   - `date` relation format (`relationFormat: 4`) should be exported as `YYYY-MM-DD` in frontmatter; exported values may arrive as unix seconds, unix milliseconds, RFC3339 strings, or date strings.
-   - Exported markdown/template files now apply Anytype timestamps to filesystem times: `lastModifiedDate`/`modifiedDate`/`changedDate` -> file mtime, `createdDate`/`addedDate` -> file atime.
-   - On macOS, exporter additionally sets filesystem birthtime from Anytype `createdDate` via `SetFile -d`, so Obsidian file Created date can differ from Modified date as in source data.
-   - `object` relation format: render note links when possible.
-   - `link-as-note-properties` can force relation values (`tag`/`status`/`type`) to render as note links; exporter creates synthetic notes for missing option/type objects when needed.
-   - `type` relation values can point to IDs from `types/*.pb.json` (not only `objects/`), so keep an id->name index for `types/` as fallback when note link is unavailable.
-   - `tag` / `status`: map option IDs to option names.
-   - `file`: map file object IDs to `files/<name>`.
-   - unknown/missing metadata: preserve raw value.
+## Style
 
-3. Block conversion
-   - text -> markdown text/styles.
-   - Anytype system title blocks can be nested inside a `layout.style: Header` container; skip `text.style: Title` blocks with `fields._detailsKey` containing `name` to avoid duplicate `#` heading at note start.
-   - `Numbered` list numbering must be sequential per sibling run (`1.`, `2.`, `3.`), reset after non-numbered sibling, with nested runs counted independently.
-   - Nested markdown list indentation should use tabs (`\t`) instead of spaces for `Checkbox` / `Marked` / `Numbered` blocks and generated TOC lists.
-   - code text blocks use `fields.lang` for fenced code language (for example, `jsx`).
-   - `Callout` / `Toggle` text styles map to Obsidian callouts (`> [!note]` / `> [!note]-`) with quoted children.
-   - file block -> markdown link/image.
-   - bookmark block -> markdown link.
-   - latex block -> `$$...$$`.
-   - link block -> wiki-link to exported note when target is known.
-   - link block target `_date_YYYY-MM-DD` -> plain date text `YYYY-MM-DD`.
-   - `div.style` values `Line`/`Dots` -> horizontal rules (`---`/`***`).
-   - `tableOfContents` block -> generated markdown list of heading anchors.
-   - template relation blocks (`blocks[*].relation.key`) -> template frontmatter keys when exporting files from `templates/`.
-   - table block -> markdown table (best effort).
-   - blocks with `dataview` payload should additionally export Obsidian `.base` files into `bases/` with per-view filters/sorts/grouping.
-   - For dataview views, `views[*].relations[*].isVisible=true` defines selected properties shown in Obsidian base `order`; if `relations` are absent, fallback to sort-derived `order`.
-   - for Anytype date filters, quick options and `includeTime=false` follow `anytype-heart/pkg/lib/database/quickoptions.go` transformation rules before rendering to base expressions.
-   - unsupported block -> skip (no fallback snippet yet).
-
-4. Preservation
-   - frontmatter for readable properties.
-   - sidecar raw JSON per object with `{id, sbType, details}` (`_anytype/raw`).
-   - global index file for deterministic mapping (`_anytype/index.json`).
-   - note filenames must prefer object `details.name`; fallback to root `Title` block text, then `details.title`, then object id.
-   - filename collisions must be resolved deterministically with numeric suffixes (`name.md`, `name-2.md`, ...).
-   - filename escaping mode is configurable: `auto` (by runtime OS), `posix`, `windows`.
-
-## Test Focus
-
-- relation mapping correctness (object/tag/status/file).
-- multi-select preservation.
-- table conversion behavior.
-- file/bookmark rendering.
-- output determinism for filename mapping.
-
-### Test
-
-- Run all tests in root module:
-  - `go test ./...`
-- Run tests in exporter package only:
-  - `go test ./internal/app/exporter`
-- Run a single test by exact name (important):
-  - `go test ./internal/app/exporter -run '^TestExporterPreservesRelationsAndFields$' -v`
-- Run tests by pattern:
-  - `go test ./internal/app/exporter -run 'TestExporter.*' -v`
-- Disable test cache when validating changes:
-  - `go test ./... -count=1`
-
-### Lint / Static Analysis
-
-- Primary static checks:
-  - `go vet ./...`
-- If `golangci-lint` is installed:
-  - `golangci-lint run ./...`
-- Current known lint status (as of this file creation):
-  - `errcheck` warnings exist in `internal/app/exporter/exporter.go` for deferred `Close()` return values.
-
-### Run CLI Locally
-
-- Run exporter with defaults:
-  - `go run ./cmd/anytype-to-obsidian`
-- Run with explicit paths:
-  - `go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault`
-- Force filename escaping behavior:
-  - `go run ./cmd/anytype-to-obsidian -filename-escaping auto`
-- Include dynamic/system-managed Anytype properties:
-  - `go run ./cmd/anytype-to-obsidian -include-dynamic-properties`
-- Exclude specific properties even when they are normally included:
-  - `go run ./cmd/anytype-to-obsidian -exclude-properties "id,spaceId"`
-- Force-include specific properties without enabling all dynamic ones:
-  - `go run ./cmd/anytype-to-obsidian -force-include-properties "anytype_id,lastModifiedDate"`
-- Render selected relation values as note links:
-  - `go run ./cmd/anytype-to-obsidian -link-as-note-properties "type,tag,status"`
-
-### Property Filtering Notes
-
-- `dynamicPropertyKeys` covers system-managed fields that can be globally enabled by `-include-dynamic-properties`.
-- `defaultHiddenPropertyKeys` covers non-dynamic fields that are still hidden by default.
-- Property filter precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules.
-- `includeByType` (type-recommended keys) must not bypass default hidden/dynamic filters; it should only prevent dropping opaque/unnamed keys via archived-property filtering.
-- Type-aware frontmatter order should use `types/*.pb.json` lists in this order: `recommendedFeaturedRelations` + `recommendedRelations` + `recommendedFileRelations`, then `recommendedHiddenRelations`, then remaining object keys.
-- Relation IDs in type recommendation lists may be stale/missing in `relations/`; always resolve best-effort and keep fallback behavior (do not drop unmatched object properties).
-
-## Code Style Guidelines
-
-### General Go Style
-
-- Write idiomatic Go.
-- Keep functions focused and small where practical.
-- Prefer simple local fixes over broad refactors.
-- Avoid introducing new dependencies unless explicitly requested.
-
-### Types and Data Structures
-
-- Prefer concrete types over `any` unless handling dynamic JSON-like payloads.
-- In this codebase, `map[string]any` is acceptable for Anytype `details` payloads.
-- Keep conversion helpers explicit (`asString`, `asInt`, etc.) rather than implicit casts.
-- Do not use type suppression patterns that hide bugs.
-
-## A note to the agent
-
-We are building this together. When you learn something non-obvious, add it to the AGENTS.md file of the corresponding project so future changes can go faster.
-
-Write all code comments and log messages only in the Russian language. Use anglicisms but write in Russian.
+- Prefer small local fixes over big refactors.
+- Do not add new dependencies unless explicitly requested.
+- `map[string]any` is acceptable for dynamic Anytype payload parts.
+- Write all code comments and log messages in Russian.

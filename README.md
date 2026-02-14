@@ -1,75 +1,62 @@
 # anytype-to-obsidian
 
-Exporter from Anytype JSON export (`Anytype-json`) to an Obsidian vault.
+Export Anytype JSON (`Anytype-json`) to an Obsidian vault with relations and metadata preserved.
 
-## Why
+## What this exporter focuses on
 
-Anytype markdown export is lossy for important cases (multi-selects, object relations, rich relation metadata). This project uses Anytype json as the source of truth and builds correct markdown notes from it.
+- Relations are exported correctly (object links, tags, statuses, files, types, multi-selects).
+- Anytype queries/dataviews are converted into Obsidian Bases (`.base`) files.
+- Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
+- Select-like values (for example `tag`, `status`, `type`) can be exported as linked objects/notes when needed.
+- Anytype templates are exported.
+- Anytype -> Obsidian block conversion is fully supported in this project scope; if you find an unsupported block, please open an issue.
 
-## Features
+## Quick start
 
-- Preserve object-to-object relations.
-- Preserve relation-backed fields, including multi-select/tag/status, object, file, and type relations.
-- Resolve relation keys by relation key or relation object ID, with readable frontmatter keys where possible.
-- Apply type-aware frontmatter ordering: type-visible properties first, then type-hidden properties, then remaining properties.
-- Convert supported blocks (text, file, bookmark, latex, link, table) to Obsidian-friendly markdown
-- Convert Anytype dataview/query blocks into Obsidian `.base` files with per-view filters, grouping, ordering, and sort metadata.
-- Support all current Anytype dataview filter conditions and quick-date options when rendering base filters.
-- Optionally render selected relation values as note links (`-link-as-note-properties`), including synthetic notes for missing tag/status/type option/type objects.
-- Export templates
-
-## Usage
+Run in interactive mode (no arguments):
 
 ```bash
-go run ./cmd/anytype-to-obsidian \
-  -input ./Anytype-json \
-  -output ./obsidian-vault
+go run ./cmd/anytype-to-obsidian
 ```
 
-Flags:
+This opens a setup form and uses these defaults:
 
-- `-input`: path to `Anytype-json` directory.
-- `-output`: target Obsidian vault path.
-- `-include-dynamic-properties`: include dynamic/system-managed Anytype properties in note frontmatter.
-- `-include-archived-properties`: include archived/unresolved relation properties that do not have readable relation names in the export.
-- `-exclude-empty-properties`: exclude frontmatter properties with empty values (`null`, empty string, empty array, empty object).
-- `-exclude-properties`: comma-separated list of property keys/names to always exclude from frontmatter.
-- `-force-include-properties`: comma-separated list of property keys/names to always include in frontmatter.
-- `-filename-escaping`: filename escaping mode (`auto`, `posix`, `windows`).
-- `-link-as-note-properties`: comma-separated relation property keys/names to render values as note links when possible (for example `type,tag,status`).
+- input: `./Anytype-json`
+- output: `./obsidian-vault`
 
-Dynamic properties are excluded by default because Obsidian manages equivalents itself (for example backlinks), and these values are backend-managed in Anytype.
+Or run directly with flags:
 
-Archived/unresolved relation properties are also excluded by default when the exporter cannot resolve a readable relation name. Use `-include-archived-properties` to keep those raw keys.
+```bash
+go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault
+```
 
-### Property Filtering
+## Main options
 
-The exporter hides certain properties by default to keep frontmatter clean:
+- `-input`: path to `Anytype-json`.
+- `-output`: output Obsidian vault path.
+- `-prettier`: format exported markdown via `npx prettier` (`true` by default).
+- `-filename-escaping`: `auto`, `posix`, or `windows`.
+- `-include-dynamic-properties`: include system-managed Anytype fields.
+- `-include-archived-properties`: include unresolved/archived relation fields.
+- `-exclude-empty-properties`: drop empty frontmatter values.
+- `-exclude-properties`: comma-separated property keys/names to exclude.
+- `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.
+- `-link-as-note-properties`: comma-separated relation keys/names to export as note links (for example `type,tag,status`).
 
-- **Dynamic properties** (e.g., `backlinks`, `lastModifiedDate`, `lastOpenedDate`, `syncStatus`) — excluded by default; enable with `-include-dynamic-properties`.
-- **Internal properties** (e.g., `id`, `spaceId`, `layout`, `createdDate`, `internalFlags`, `featuredRelations`) — always excluded to avoid clutter.
+Property precedence:
 
-To override these rules for specific properties:
+- `force-include` -> `exclude` -> default hidden/dynamic/archived rules
+- then `-exclude-empty-properties` removes remaining empty values
 
-- Use `-force-include-properties "anytype_id,lastModifiedDate"` to include specific properties without enabling all dynamic ones.
-- Use `-exclude-properties "customField,backlinks"` to explicitly exclude properties even when they would normally be included.
-- Use `-exclude-empty-properties` to skip properties that resolve to empty values in frontmatter.
-
-Precedence: `force-include` > `exclude` > default hidden/dynamic/archived rules; then `-exclude-empty-properties` removes remaining empty values.
-
-## Output Structure
+## Output
 
 - `notes/*.md` - exported notes.
-- `templates/*.md` - exported templates from Anytype with type-prefixed filenames (e.g., `Human - Contact.md`).
-- `bases/*.base` - exported Obsidian Bases files generated from Anytype dataview/query blocks.
-- `files/*` - copied assets from Anytype export.
-- `_anytype/index.json` - mapping and metadata index.
-- `_anytype/raw/*.json` - raw details for each exported object.
+- `templates/*.md` - exported templates.
+- `bases/*.base` - exported Obsidian Bases from Anytype queries.
+- `files/*` - copied files/assets.
+- `_anytype/index.json` - mapping/index metadata.
+- `_anytype/raw/*.json` - raw Anytype payload sidecars.
 
-## Development
+## Issues
 
-Run tests:
-
-```bash
-go test ./...
-```
+If some relation, property, query, or block does not export as expected, open an issue with a minimal example object/export.
