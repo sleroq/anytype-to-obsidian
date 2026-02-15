@@ -2400,25 +2400,25 @@ func TestExporterGeneratesBaseFileFromDataviewQuery(t *testing.T) {
 	}
 	base := string(baseBytes)
 
-	if !strings.Contains(base, "views:") || !strings.Contains(base, "name: \"All\"") {
+	if !strings.Contains(base, "views:") || !strings.Contains(base, "name: All") {
 		t.Fatalf("expected base views to be rendered, got:\n%s", base)
 	}
-	if !strings.Contains(base, "order:") || !strings.Contains(base, "\"file.name\"") || !strings.Contains(base, "\"note.tags\"") || !strings.Contains(base, "\"note.dueDate\"") {
+	if !strings.Contains(base, "order:") || !strings.Contains(base, "- file.name") || !strings.Contains(base, "- tags") || !strings.Contains(base, "- dueDate") {
 		t.Fatalf("expected selected properties mapped into view order, got:\n%s", base)
 	}
-	if strings.Contains(base, "\n      - \"note.status\"\n") {
+	if strings.Contains(base, "\n      - status\n") {
 		t.Fatalf("expected hidden relation to be excluded from selected properties, got:\n%s", base)
 	}
-	if !strings.Contains(base, "sort:") || !strings.Contains(base, "property: \"file.mtime\"") || !strings.Contains(base, "property: \"file.ctime\"") {
+	if !strings.Contains(base, "sort:") || !strings.Contains(base, "property: file.mtime") || !strings.Contains(base, "property: file.ctime") {
 		t.Fatalf("expected created/modified sorts mapped into sort metadata, got:\n%s", base)
 	}
-	if !strings.Contains(base, "groupBy:") || !strings.Contains(base, "\"note.status\"") {
+	if !strings.Contains(base, "groupBy:") || !strings.Contains(base, "property: status") {
 		t.Fatalf("expected groupBy to be rendered, got:\n%s", base)
 	}
 	if !strings.Contains(base, "Task Type") || !strings.Contains(base, "Focus") {
 		t.Fatalf("expected filter value and relation key mapping, got:\n%s", base)
 	}
-	if !strings.Contains(base, "direction: \"CUSTOM\"") || !strings.Contains(base, "customOrder:") || !strings.Contains(base, "\"Doing\"") {
+	if !strings.Contains(base, "direction: CUSTOM") || !strings.Contains(base, "customOrder:") || !strings.Contains(base, "- Doing") {
 		t.Fatalf("expected custom sort metadata to be preserved, got:\n%s", base)
 	}
 }
@@ -2480,6 +2480,35 @@ func TestParseDataviewViewsMapsKanbanToTableWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestRenderBaseFileAddsSetOfTypeFilter(t *testing.T) {
+	obj := objectInfo{
+		ID: "query-1",
+		Details: map[string]any{
+			"setOf": []any{"type-game"},
+		},
+		Blocks: []block{
+			{
+				ID: "dataview",
+				Dataview: map[string]any{
+					"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+				},
+			},
+		},
+	}
+
+	relations := map[string]relationDef{
+		"type": {Key: "type", Name: "Type", Format: anytypedomain.RelationFormatObjectRef},
+	}
+
+	base, ok := renderBaseFile(obj, relations, nil, nil, map[string]string{"type-game": "Games"}, nil, false, true)
+	if !ok {
+		t.Fatalf("expected base to be rendered")
+	}
+	if !strings.Contains(base, "type == \\\"Games\\\"") || !strings.Contains(base, "list(type).contains(\\\"Games\\\")") {
+		t.Fatalf("expected setOf type filter to be added to base views, got:\n%s", base)
+	}
+}
+
 func TestExporterRendersKanbanPluginViewByDefault(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -2513,10 +2542,10 @@ func TestExporterRendersKanbanPluginViewByDefault(t *testing.T) {
 	}
 	base := string(baseBytes)
 
-	if !strings.Contains(base, "views:\n  - type: \"kanban\"\n") {
+	if !strings.Contains(base, "views:\n  - type: kanban\n") {
 		t.Fatalf("expected board view to render as plugin kanban view, got:\n%s", base)
 	}
-	if !strings.Contains(base, "name: \"All\"") || !strings.Contains(base, "limit: 10") {
+	if !strings.Contains(base, "name: All") || !strings.Contains(base, "limit: 10") {
 		t.Fatalf("expected plugin kanban view metadata to be preserved, got:\n%s", base)
 	}
 }

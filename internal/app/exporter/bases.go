@@ -43,6 +43,7 @@ type baseFilterNode struct {
 }
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var basePlainScalarPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*$`)
 
 func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) (string, bool) {
 	var views []baseViewSpec
@@ -70,14 +71,20 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 		}
 	}
 
+	if setOfFilter := buildSetOfTypeFilter(obj, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover); setOfFilter != nil {
+		for i := range views {
+			views[i].Filters = andBaseFilters(views[i].Filters, setOfFilter)
+		}
+	}
+
 	var buf bytes.Buffer
 	buf.WriteString("views:\n")
 	for _, v := range views {
 		buf.WriteString("  - type: ")
-		writeYAMLString(&buf, v.Type)
+		writeBaseYAMLScalar(&buf, v.Type)
 		buf.WriteString("\n")
 		buf.WriteString("    name: ")
-		writeYAMLString(&buf, v.Name)
+		writeBaseYAMLScalar(&buf, v.Name)
 		buf.WriteString("\n")
 		if v.Limit > 0 {
 			buf.WriteString("    limit: ")
@@ -87,10 +94,10 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 		if v.GroupBy != nil {
 			buf.WriteString("    groupBy:\n")
 			buf.WriteString("      property: ")
-			writeYAMLString(&buf, v.GroupBy.Property)
+			writeBaseYAMLScalar(&buf, v.GroupBy.Property)
 			buf.WriteString("\n")
 			buf.WriteString("      direction: ")
-			writeYAMLString(&buf, v.GroupBy.Direction)
+			writeBaseYAMLScalar(&buf, v.GroupBy.Direction)
 			buf.WriteString("\n")
 		}
 		if v.Filters != nil {
@@ -105,7 +112,7 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 			buf.WriteString("    order:\n")
 			for _, prop := range order {
 				buf.WriteString("      - ")
-				writeYAMLString(&buf, prop)
+				writeBaseYAMLScalar(&buf, prop)
 				buf.WriteString("\n")
 			}
 		}
@@ -113,31 +120,16 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 			buf.WriteString("    sort:\n")
 			for _, s := range v.Sort {
 				buf.WriteString("      - property: ")
-				writeYAMLString(&buf, s.Property)
+				writeBaseYAMLScalar(&buf, s.Property)
 				buf.WriteString("\n")
 				buf.WriteString("        direction: ")
-				writeYAMLString(&buf, s.Direction)
+				writeBaseYAMLScalar(&buf, s.Direction)
 				buf.WriteString("\n")
-				buf.WriteString("        emptyPlacement: ")
-				writeYAMLString(&buf, s.EmptyPlacement)
-				buf.WriteString("\n")
-				buf.WriteString("        includeTime: ")
-				if s.IncludeTime {
-					buf.WriteString("true\n")
-				} else {
-					buf.WriteString("false\n")
-				}
-				buf.WriteString("        noCollate: ")
-				if s.NoCollate {
-					buf.WriteString("true\n")
-				} else {
-					buf.WriteString("false\n")
-				}
 				if len(s.CustomOrder) > 0 {
 					buf.WriteString("        customOrder:\n")
 					for _, item := range s.CustomOrder {
 						buf.WriteString("          - ")
-						writeYAMLString(&buf, item)
+						writeBaseYAMLScalar(&buf, item)
 						buf.WriteString("\n")
 					}
 				}
@@ -162,6 +154,38 @@ func andBaseFilters(left *baseFilterNode, right *baseFilterNode) *baseFilterNode
 		return left
 	}
 	return &baseFilterNode{Op: "and", Items: []baseFilterNode{*left, *right}}
+}
+
+func buildSetOfTypeFilter(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) *baseFilterNode {
+	setOfIDs := anyToStringSlice(obj.Details["setOf"])
+	if len(setOfIDs) == 0 {
+		return nil
+	}
+
+	prop := baseFilterPropertyPath("type", relations, pictureToCover)
+	if prop == "" {
+		return nil
+	}
+
+	mapped := convertPropertyValue("type", setOfIDs, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
+	values, ok := valueAsSlice(mapped)
+	if !ok || len(values) == 0 {
+		literal := renderFilterLiteral(mapped)
+		expr := "(" + prop + " == " + literal + " || " + buildContainsAnyExpression(prop, []string{literal}) + ")"
+		return &baseFilterNode{Expr: expr}
+	}
+
+	scalarParts := make([]string, 0, len(values))
+	for _, value := range values {
+		scalarParts = append(scalarParts, prop+" == "+value)
+	}
+	containsAny := buildContainsAnyExpression(prop, values)
+	if len(scalarParts) == 0 {
+		return &baseFilterNode{Expr: containsAny}
+	}
+
+	expr := "((" + strings.Join(scalarParts, " || ") + ") || " + containsAny + ")"
+	return &baseFilterNode{Expr: expr}
 }
 
 func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) []baseViewSpec {
@@ -216,7 +240,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 				continue
 			}
 			relationKey := asString(anyMapGet(relationMap, "key", "Key"))
-			property := basePropertyPath(relationKey, relations, pictureToCover)
+			property := baseViewPropertyPath(relationKey, relations, pictureToCover)
 			if property == "" {
 				continue
 			}
@@ -236,7 +260,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 				continue
 			}
 			relationKey := asString(anyMapGet(sortMap, "RelationKey", "relationKey"))
-			property := basePropertyPath(relationKey, relations, pictureToCover)
+			property := baseViewPropertyPath(relationKey, relations, pictureToCover)
 			if property == "" {
 				continue
 			}
@@ -263,7 +287,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 			if len(view.Sort) > 0 && strings.TrimSpace(view.Sort[0].Direction) != "" {
 				direction = view.Sort[0].Direction
 			}
-			view.GroupBy = &baseGroupSpec{Property: basePropertyPath(groupKey, relations, pictureToCover), Direction: direction}
+			view.GroupBy = &baseGroupSpec{Property: baseViewPropertyPath(groupKey, relations, pictureToCover), Direction: direction}
 		}
 
 		filterNodes := make([]baseFilterNode, 0)
@@ -372,7 +396,7 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 	if condition == "" {
 		return ""
 	}
-	prop := basePropertyPath(relationKey, relations, pictureToCover)
+	prop := baseFilterPropertyPath(relationKey, relations, pictureToCover)
 	if prop == "" {
 		return ""
 	}
@@ -689,7 +713,7 @@ func mappedToString(value any) string {
 	}
 }
 
-func basePropertyPath(rawKey string, relations map[string]relationDef, pictureToCover bool) string {
+func baseViewPropertyPath(rawKey string, relations map[string]relationDef, pictureToCover bool) string {
 	rawKey = strings.TrimSpace(rawKey)
 	if rawKey == "" {
 		return ""
@@ -707,8 +731,32 @@ func basePropertyPath(rawKey string, relations map[string]relationDef, pictureTo
 	if frontKey == "" {
 		frontKey = rawKey
 	}
+	return frontKey
+}
+
+func baseFilterPropertyPath(rawKey string, relations map[string]relationDef, pictureToCover bool) string {
+	frontKey := baseViewPropertyPath(rawKey, relations, pictureToCover)
+	if frontKey == "" {
+		return ""
+	}
+	if strings.HasPrefix(frontKey, "file.") {
+		return frontKey
+	}
 	if identifierPattern.MatchString(frontKey) {
-		return "note." + frontKey
+		return frontKey
 	}
 	return "note[" + strconv.Quote(frontKey) + "]"
+}
+
+func writeBaseYAMLScalar(buf *bytes.Buffer, s string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		writeYAMLString(buf, "")
+		return
+	}
+	if basePlainScalarPattern.MatchString(s) {
+		buf.WriteString(s)
+		return
+	}
+	writeYAMLString(buf, s)
 }
