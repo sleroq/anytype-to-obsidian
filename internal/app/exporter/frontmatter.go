@@ -824,7 +824,7 @@ func inferObjectTitle(obj objectInfo) string {
 		return title
 	}
 
-	return obj.ID
+	return ""
 }
 
 func inferTemplateTypeName(typeID string, typesByID map[string]typeDef) string {

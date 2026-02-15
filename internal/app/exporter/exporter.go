@@ -298,7 +298,7 @@ func buildNotePathIndex(allObjects []objectInfo, filenameEscaping string) map[st
 		title := inferObjectTitle(obj)
 		base := sanitizeName(title, filenameEscaping)
 		if base == "" {
-			base = obj.ID
+			base = "Untitled"
 		}
 		usedKey := filenameCollisionKey(base, filenameEscaping)
 		n := used[usedKey]
@@ -492,7 +492,7 @@ func (e Exporter) Run() (Stats, error) {
 		title := inferObjectTitle(obj)
 		baseName := sanitizeName(title, filenameEscaping)
 		if baseName == "" {
-			baseName = obj.ID
+			baseName = "Untitled"
 		}
 		usedKey := filenameCollisionKey(baseName, filenameEscaping)
 		n := usedBaseNames[usedKey]

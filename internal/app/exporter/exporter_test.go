@@ -1125,6 +1125,48 @@ func TestExporterLinksQueriesToBaseFiles(t *testing.T) {
 	}
 }
 
+func TestExporterUsesUntitledBaseFileNameAndNumbersCollisions(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "query-1.pb.json"), "Page", map[string]any{
+		"id": "query-1",
+	}, []map[string]any{
+		{"id": "query-1", "childrenIds": []string{"dataview"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "List", "name": "All"}},
+		}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "query-2.pb.json"), "Page", map[string]any{
+		"id": "query-2",
+	}, []map[string]any{
+		{"id": "query-2", "childrenIds": []string{"dataview"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "Untitled.base")); err != nil {
+		t.Fatalf("expected untitled base filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "bases", "Untitled-2.base")); err != nil {
+		t.Fatalf("expected collision-safe untitled base filename: %v", err)
+	}
+}
+
 func TestExporterReusesTargetQueryBaseForInlineDataview(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -1911,7 +1953,7 @@ func TestAnytypeTimestampsPrefersCreatedForAccessAndModifiedForWrite(t *testing.
 	}
 }
 
-func TestExporterInfersNoteFileNameFromTitleThenDetailsThenID(t *testing.T) {
+func TestExporterInfersNoteFileNameFromTitleThenDetailsThenUntitled(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
 	output := filepath.Join(root, "vault")
@@ -1941,6 +1983,10 @@ func TestExporterInfersNoteFileNameFromTitleThenDetailsThenID(t *testing.T) {
 		"id": "obj-fallback",
 	}, []map[string]any{{"id": "obj-fallback", "childrenIds": []string{}}})
 
+	writePBJSON(t, filepath.Join(input, "objects", "obj-fallback-2.pb.json"), "Page", map[string]any{
+		"id": "obj-fallback-2",
+	}, []map[string]any{{"id": "obj-fallback-2", "childrenIds": []string{}}})
+
 	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
 	if err != nil {
 		t.Fatalf("run exporter: %v", err)
@@ -1952,8 +1998,11 @@ func TestExporterInfersNoteFileNameFromTitleThenDetailsThenID(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(output, "notes", "From Details Title.md")); err != nil {
 		t.Fatalf("expected details.title fallback filename: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(output, "notes", "obj-fallback.md")); err != nil {
-		t.Fatalf("expected object-id fallback filename: %v", err)
+	if _, err := os.Stat(filepath.Join(output, "notes", "Untitled.md")); err != nil {
+		t.Fatalf("expected untitled fallback filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Untitled-2.md")); err != nil {
+		t.Fatalf("expected collision-safe untitled filename: %v", err)
 	}
 }
 
