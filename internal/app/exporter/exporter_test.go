@@ -2193,6 +2193,170 @@ func TestExporterCanDisableIconizeIntegration(t *testing.T) {
 	}
 }
 
+func TestExporterWritesPrettyPropertiesColorsFromAnytypeRelationOptions(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	prepareMinimalExportFixture(t, input)
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-tag.pb.json"), "STRelation", map[string]any{
+		"id":               "rel-tag",
+		"name":             "Tag",
+		"relationKey":      "tag",
+		"relationFormat":   3,
+		"relationMaxCount": 0,
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-status.pb.json"), "STRelation", map[string]any{
+		"id":               "rel-status",
+		"name":             "Status",
+		"relationKey":      "status",
+		"relationFormat":   3,
+		"relationMaxCount": 1,
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relations", "rel-topic.pb.json"), "STRelation", map[string]any{
+		"id":               "rel-topic",
+		"name":             "Topic",
+		"relationKey":      "topic",
+		"relationFormat":   3,
+		"relationMaxCount": 0,
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-tag",
+		"name":                "Backend",
+		"relationKey":         "tag",
+		"relationOptionColor": "teal",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-status.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-status",
+		"name":                "In Progress",
+		"relationKey":         "status",
+		"relationOptionColor": "lime",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-topic.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-topic",
+		"name":                "Infra",
+		"relationKey":         "topic",
+		"relationOptionColor": "ice",
+	}, nil)
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	dataPath := filepath.Join(output, ".obsidian", "plugins", "pretty-properties", "data.json")
+	dataBytes, err := os.ReadFile(dataPath)
+	if err != nil {
+		t.Fatalf("read pretty properties data: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("decode pretty properties data: %v", err)
+	}
+
+	tagColors, ok := data["tagColors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tagColors to be present in pretty properties data")
+	}
+	tagBackend, ok := tagColors["Backend"].(map[string]any)
+	if !ok || asString(tagBackend["pillColor"]) != "cyan" {
+		t.Fatalf("expected teal to map to cyan in tagColors, got %#v", tagColors["Backend"])
+	}
+
+	longtextColors, ok := data["propertyLongtextColors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected propertyLongtextColors to be present in pretty properties data")
+	}
+	statusValue, ok := longtextColors["In Progress"].(map[string]any)
+	if !ok || asString(statusValue["pillColor"]) != "green" {
+		t.Fatalf("expected lime to map to green for status-like property, got %#v", longtextColors["In Progress"])
+	}
+
+	pillColors, ok := data["propertyPillColors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected propertyPillColors to be present in pretty properties data")
+	}
+	topicValue, ok := pillColors["Infra"].(map[string]any)
+	if !ok || asString(topicValue["pillColor"]) != "blue" {
+		t.Fatalf("expected ice to map to blue for multi-value property, got %#v", pillColors["Infra"])
+	}
+}
+
+func TestExporterMergesPrettyPropertiesColorsWithoutOverwritingUserChoices(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	prepareMinimalExportFixture(t, input)
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-tag.pb.json"), "STRelation", map[string]any{
+		"id":               "rel-tag",
+		"name":             "Tag",
+		"relationKey":      "tag",
+		"relationFormat":   3,
+		"relationMaxCount": 0,
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-existing.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-tag-existing",
+		"name":                "Backend",
+		"relationKey":         "tag",
+		"relationOptionColor": "teal",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-new.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-tag-new",
+		"name":                "Research",
+		"relationKey":         "tag",
+		"relationOptionColor": "grey",
+	}, nil)
+
+	dataPath := filepath.Join(output, ".obsidian", "plugins", "pretty-properties", "data.json")
+	mustMkdirAll(t, filepath.Dir(dataPath))
+	existing := map[string]any{
+		"tagColors": map[string]any{
+			"Backend": map[string]any{"pillColor": "purple", "textColor": "default"},
+		},
+	}
+	existingBytes, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatalf("marshal existing pretty properties data: %v", err)
+	}
+	if err := os.WriteFile(dataPath, existingBytes, 0o644); err != nil {
+		t.Fatalf("write existing pretty properties data: %v", err)
+	}
+
+	_, err = (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	dataBytes, err := os.ReadFile(dataPath)
+	if err != nil {
+		t.Fatalf("read pretty properties data: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("decode pretty properties data: %v", err)
+	}
+
+	tagColors, ok := data["tagColors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tagColors to be present in pretty properties data")
+	}
+	backendValue, ok := tagColors["Backend"].(map[string]any)
+	if !ok || asString(backendValue["pillColor"]) != "purple" {
+		t.Fatalf("expected existing Backend color to be preserved, got %#v", tagColors["Backend"])
+	}
+	researchValue, ok := tagColors["Research"].(map[string]any)
+	if !ok || asString(researchValue["pillColor"]) != "default" {
+		t.Fatalf("expected grey to map to default for new value, got %#v", tagColors["Research"])
+	}
+}
+
 func prepareMinimalExportFixture(t *testing.T, input string) {
 	t.Helper()
 	mustMkdirAll(t, filepath.Join(input, "objects"))

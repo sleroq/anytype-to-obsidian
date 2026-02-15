@@ -102,6 +102,7 @@ func readRelations(dir string) (map[string]anytypedomain.RelationDef, error) {
 			Key:    key,
 			Name:   asString(f.Snapshot.Data.Details["name"]),
 			Format: asInt(f.Snapshot.Data.Details["relationFormat"]),
+			Max:    asInt(f.Snapshot.Data.Details["relationMaxCount"]),
 		}
 		if key != "" {
 			out[key] = def

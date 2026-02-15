@@ -83,6 +83,7 @@ type RelationDef struct {
 	Key    string
 	Name   string
 	Format int
+	Max    int
 }
 
 type TypeDef struct {
