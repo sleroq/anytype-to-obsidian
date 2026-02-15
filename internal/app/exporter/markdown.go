@@ -329,6 +329,9 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 	if b.Text == nil {
 		return
 	}
+	if depth == 0 && buf.Len() > 0 && !bytes.HasSuffix(buf.Bytes(), []byte("\n\n")) {
+		buf.WriteString("\n")
+	}
 	marker := "> [!note]"
 	if b.Text.Style == "Toggle" {
 		marker += "-"
@@ -343,6 +346,7 @@ func renderCalloutBlock(buf *bytes.Buffer, byID map[string]block, b block, notes
 	renderChildren(&child, byID, b.ChildrenID, notes, sourceNotePath, fileObjects, excalidrawEmbeds, depth+1, rootID)
 	body := strings.TrimRight(child.String(), "\n")
 	if body == "" {
+		buf.WriteString("\n")
 		return
 	}
 	buf.WriteString(prefixLines(body, "> "))
@@ -721,6 +725,12 @@ func exportPrettyPropertiesPluginData(outputDir string, relations map[string]rel
 		if listKey == "" {
 			continue
 		}
+		if listKey == "tagColors" {
+			name = sanitizeObsidianTag(name)
+			if name == "" {
+				continue
+			}
+		}
 		colorByList[listKey][name] = mappedColor
 	}
 
@@ -747,6 +757,9 @@ func exportPrettyPropertiesPluginData(outputDir string, relations map[string]rel
 	}
 
 	changed := false
+	if normalizePrettyPropertiesTagColorKeys(data) {
+		changed = true
+	}
 	for listKey, values := range colorByList {
 		colorList := ensureAnyMap(data, listKey)
 		for valueName, color := range values {
@@ -766,6 +779,42 @@ func exportPrettyPropertiesPluginData(outputDir string, relations map[string]rel
 	}
 
 	return os.WriteFile(dataPath, encoded, 0o644)
+}
+
+func normalizePrettyPropertiesTagColorKeys(data map[string]any) bool {
+	tagColors, ok := data["tagColors"].(map[string]any)
+	if !ok || len(tagColors) == 0 {
+		return false
+	}
+
+	type rename struct {
+		from string
+		to   string
+	}
+	renames := make([]rename, 0)
+	for key := range tagColors {
+		normalized := sanitizeObsidianTag(key)
+		if normalized == "" || normalized == key {
+			continue
+		}
+		renames = append(renames, rename{from: key, to: normalized})
+	}
+
+	if len(renames) == 0 {
+		return false
+	}
+
+	changed := false
+	for _, item := range renames {
+		if _, exists := tagColors[item.to]; !exists {
+			tagColors[item.to] = tagColors[item.from]
+			changed = true
+		}
+		delete(tagColors, item.from)
+		changed = true
+	}
+
+	return changed
 }
 
 func ensureAnyMap(data map[string]any, key string) map[string]any {

@@ -872,6 +872,49 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 	}
 }
 
+func TestExporterSeparatesQuoteCalloutAndFollowingBlocks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "quote-callout-row.pb.json"), "Page", map[string]any{
+		"id":   "quote-callout-row",
+		"name": "Quote Callout Row",
+	}, []map[string]any{
+		{"id": "quote-callout-row", "childrenIds": []string{"title", "quote", "callout", "row"}},
+		{"id": "title", "text": map[string]any{"text": "Quote Callout Row", "style": "Title"}},
+		{"id": "quote", "text": map[string]any{"text": "highlighted", "style": "Quote"}},
+		{"id": "callout", "text": map[string]any{"text": "callout!", "style": "Callout"}},
+		{"id": "row", "layout": map[string]any{"style": "Row"}, "childrenIds": []string{"left-col", "right-col"}},
+		{"id": "left-col", "layout": map[string]any{"style": "Column"}, "childrenIds": []string{"left-text"}},
+		{"id": "left-text", "text": map[string]any{"text": "two blocks", "style": "Paragraph"}},
+		{"id": "right-col", "layout": map[string]any{"style": "Column"}, "childrenIds": []string{"right-text"}},
+		{"id": "right-text", "text": map[string]any{"text": "together", "style": "Paragraph"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Quote Callout Row.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	expected := "> highlighted\n\n> [!note] callout!\n\ntwo blocks\ntogether"
+	if !strings.Contains(note, expected) {
+		t.Fatalf("expected quote/callout/row separation, got:\n%s", note)
+	}
+}
+
 func TestExporterExtractsExcalidrawToDedicatedFolderAndEmbedsIt(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -2296,6 +2339,12 @@ func TestExporterWritesPrettyPropertiesColorsFromAnytypeRelationOptions(t *testi
 		"relationKey":         "tag",
 		"relationOptionColor": "teal",
 	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-space.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-tag-space",
+		"name":                "Team Alpha",
+		"relationKey":         "tag",
+		"relationOptionColor": "orange",
+	}, nil)
 	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-status.pb.json"), "STRelationOption", map[string]any{
 		"id":                  "opt-status",
 		"name":                "In Progress",
@@ -2332,6 +2381,10 @@ func TestExporterWritesPrettyPropertiesColorsFromAnytypeRelationOptions(t *testi
 	tagBackend, ok := tagColors["Backend"].(map[string]any)
 	if !ok || asString(tagBackend["pillColor"]) != "cyan" {
 		t.Fatalf("expected teal to map to cyan in tagColors, got %#v", tagColors["Backend"])
+	}
+	tagTeamAlpha, ok := tagColors["Team-Alpha"].(map[string]any)
+	if !ok || asString(tagTeamAlpha["pillColor"]) != "orange" {
+		t.Fatalf("expected spaced tag key to be sanitized for tagColors, got %#v", tagColors["Team-Alpha"])
 	}
 
 	longtextColors, ok := data["propertyLongtextColors"].(map[string]any)
@@ -2422,6 +2475,71 @@ func TestExporterMergesPrettyPropertiesColorsWithoutOverwritingUserChoices(t *te
 	researchValue, ok := tagColors["Research"].(map[string]any)
 	if !ok || asString(researchValue["pillColor"]) != "default" {
 		t.Fatalf("expected grey to map to default for new value, got %#v", tagColors["Research"])
+	}
+}
+
+func TestExporterNormalizesExistingPrettyPropertiesTagColorKeys(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	prepareMinimalExportFixture(t, input)
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-tag.pb.json"), "STRelation", map[string]any{
+		"id":               "rel-tag",
+		"name":             "Tag",
+		"relationKey":      "tag",
+		"relationFormat":   11,
+		"relationMaxCount": 0,
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-existing.pb.json"), "STRelationOption", map[string]any{
+		"id":                  "opt-tag-existing",
+		"name":                "Project Alpha",
+		"relationKey":         "tag",
+		"relationOptionColor": "teal",
+	}, nil)
+
+	dataPath := filepath.Join(output, ".obsidian", "plugins", "pretty-properties", "data.json")
+	mustMkdirAll(t, filepath.Dir(dataPath))
+	existing := map[string]any{
+		"tagColors": map[string]any{
+			"Project Alpha": map[string]any{"pillColor": "purple", "textColor": "default"},
+		},
+	}
+	existingBytes, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatalf("marshal existing pretty properties data: %v", err)
+	}
+	if err := os.WriteFile(dataPath, existingBytes, 0o644); err != nil {
+		t.Fatalf("write existing pretty properties data: %v", err)
+	}
+
+	_, err = (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	dataBytes, err := os.ReadFile(dataPath)
+	if err != nil {
+		t.Fatalf("read pretty properties data: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(dataBytes, &data); err != nil {
+		t.Fatalf("decode pretty properties data: %v", err)
+	}
+
+	tagColors, ok := data["tagColors"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tagColors to be present in pretty properties data")
+	}
+	if _, exists := tagColors["Project Alpha"]; exists {
+		t.Fatalf("expected legacy unsanitized tagColors key to be removed, got %#v", tagColors)
+	}
+	normalizedValue, ok := tagColors["Project-Alpha"].(map[string]any)
+	if !ok || asString(normalizedValue["pillColor"]) != "purple" {
+		t.Fatalf("expected sanitized key to preserve existing user color, got %#v", tagColors["Project-Alpha"])
 	}
 }
 
