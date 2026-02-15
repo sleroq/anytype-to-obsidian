@@ -530,10 +530,6 @@ func anytypeTimestamps(details map[string]any) (time.Time, time.Time, bool) {
 	return anytypedomain.AnytypeTimestamps(details, createdDateKeys, changedDateKeys, modifiedDateKeys)
 }
 
-func firstParsedTimestamp(details map[string]any, keys []string) (time.Time, bool) {
-	return anytypedomain.FirstParsedTimestamp(details, keys)
-}
-
 func parseAnytypeTimestamp(value any) (time.Time, bool) {
 	return anytypedomain.ParseAnytypeTimestamp(value)
 }
@@ -831,8 +827,4 @@ func copyDir(src, dst string) (int, error) {
 
 func normalizeExportedFileObjectPaths(inputDir, outputDir string, fileObjects map[string]string) error {
 	return exportfs.NormalizeExportedFileObjectPaths(inputDir, outputDir, fileObjects)
-}
-
-func detectFileExtensionFromContent(path string) string {
-	return exportfs.DetectFileExtensionFromContent(path)
 }

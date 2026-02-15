@@ -1427,7 +1427,7 @@ func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *te
 	if contactIdx < 0 || extraIdx < 0 {
 		t.Fatalf("expected ordered properties to exist, got:\n%s", note)
 	}
-	if !(contactIdx < extraIdx) {
+	if contactIdx >= extraIdx {
 		t.Fatalf("expected type visible then non-type order, got:\n%s", note)
 	}
 
@@ -1449,7 +1449,7 @@ func TestExporterOrdersTypePropertiesAndExcludesDynamicTypeHiddenByDefault(t *te
 	contactIdx = strings.Index(note, "contact: \"john@example.com\"")
 	hiddenIdx := strings.Index(note, "lastModifiedDate: \"2023-11-14\"")
 	extraIdx = strings.Index(note, "customExtra: \"keep\"")
-	if !(contactIdx < hiddenIdx && hiddenIdx < extraIdx) {
+	if contactIdx >= hiddenIdx || hiddenIdx >= extraIdx {
 		t.Fatalf("expected type visible then type hidden then non-type order when dynamic is enabled, got:\n%s", note)
 	}
 }

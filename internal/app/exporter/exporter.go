@@ -37,12 +37,6 @@ type Stats struct {
 
 type block = anytypedomain.Block
 type textBlock = anytypedomain.TextBlock
-type fileBlock = anytypedomain.FileBlock
-type bookmarkBlock = anytypedomain.BookmarkBlock
-type latexBlock = anytypedomain.LatexBlock
-type linkBlock = anytypedomain.LinkBlock
-type layoutBlock = anytypedomain.LayoutBlock
-type relationBlock = anytypedomain.RelationBlock
 type relationDef = anytypedomain.RelationDef
 type typeDef = anytypedomain.TypeDef
 type relationOption = anytypedomain.RelationOption
