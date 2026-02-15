@@ -1,63 +1,117 @@
-# anytype-to-obsidian: implementation notes
+# AGENTS.md - anytype-to-obsidian
 
-## Goal
+## Scope and Intent
 
-- Source of truth is `Anytype-json` (not `Anytype-md`).
-- Export to Obsidian with correct relations, properties, blocks, templates, and query -> `.base` conversion.
+- This file is for agents working in the root module `github.com/sleroq/anytype-to-obsidian`.
+- Primary goal: convert Anytype JSON export into Obsidian artifacts with stable, loss-aware mapping.
+- Source of truth is `Anytype-json/` (not markdown exports).
+- Keep changes minimal, local, and behavior-preserving unless explicitly asked otherwise.
 
-## Important data layout
+## Related Agent Rules
 
-- `Anytype-json/objects` - main objects.
-- `Anytype-json/relations` - relation defs (`relationKey`, `relationFormat`).
-- `Anytype-json/relationsOptions` - options for tag/status-like relations.
-- `Anytype-json/types` - type objects.
-- `Anytype-json/templates` - templates.
-- `Anytype-json/filesObjects` + `Anytype-json/files` - file metadata and binaries.
+- There is a nested module at `anytype-heart/` with its own `AGENTS.md`; do not mix its conventions into root changes unless explicitly working there.
 
-## Core code paths
+## Repository Layout
 
-- `cmd/anytype-to-obsidian/main.go` - CLI flags + interactive mode (no args).
-- `internal/app/exporter/exporter.go` - main export pipeline and mapping.
-- `internal/app/exporter/*_test.go` - behavior tests.
-- `internal/infra/anytypejson` - Anytype JSON parsing.
-- `internal/domain` - conversion/value helpers.
+- `cmd/anytype-to-obsidian/main.go` - CLI entrypoint, flags, interactive setup.
+- `internal/app/exporter/` - export pipeline, frontmatter/body rendering, `.base` generation.
+- `internal/infra/anytypejson/` - parser/loader for Anytype `.pb.json` snapshots.
+- `internal/infra/exportfs/` - filesystem copy/path/timestamp helpers.
+- `internal/domain/anytype/` - shared conversion and Anytype value logic.
+- `Anytype-json/` - test/dev input fixtures and reference structure.
+- `obsidian-vault/` - typical output target during manual runs.
 
-## Rules that matter for new features
+## Anytype Input Model (Important)
 
-- Resolve object detail keys both by relation key and relation object ID.
-- Keep raw values when metadata is missing (do not drop unknown data).
-- For `type` relation values, support IDs from `types/*.pb.json` as fallback.
-- `link-as-note-properties` can force values like `type,tag,status` to be note links.
-- Dataview/query blocks must export to `bases/*.base` with filters/sort/group/order.
-- File names must be deterministic and collision-safe (`name.md`, `name-2.md`, ...).
-- Apply Anytype timestamps to exported files (`mtime`/`atime`; macOS birthtime when available).
+- `Anytype-json/objects` - object snapshots (`Page`, etc).
+- `Anytype-json/relations` - relation definitions (`relationKey`, `relationFormat`, `relationMaxCount`).
+- `Anytype-json/relationsOptions` - option objects for status/tag-like relations.
+- `Anytype-json/types` - type metadata and recommended/hidden relation refs.
+- `Anytype-json/templates` - templates mapped into Obsidian templates.
+- `Anytype-json/filesObjects` + `Anytype-json/files` - file object metadata + binary files.
 
-## Output contract
+## Output Contract (Do Not Break)
 
-- `notes/*.md`
-- `templates/*.md`
-- `bases/*.base`
-- `files/*`
-- `_anytype/index.json`
-- `_anytype/raw/*.json`
+- `notes/*.md` - exported notes and synthetic link notes.
+- `templates/*.md` - exported templates.
+- `bases/*.base` - converted Anytype dataview/query definitions.
+- `files/*` - copied assets/files.
+- `_anytype/index.json` - deterministic object ID -> note path index.
+- `_anytype/raw/*.json` - raw details sidecars for each exported object.
 
-## Verification commands
+## Build, Run, Lint, Test
 
-- Preferred full check: `go test ./cmd/... ./internal/...`
-- Exporter tests only: `go test ./internal/app/exporter`
-- Single test: `go test ./internal/app/exporter -run '^TestName$' -v`
-- Vet: `go vet ./...`
+- Build CLI: `go build ./cmd/anytype-to-obsidian`
+- Run interactive mode: `go run ./cmd/anytype-to-obsidian`
+- Run with flags: `go run ./cmd/anytype-to-obsidian -input ./Anytype-json -output ./obsidian-vault`
+- Preferred full verification: `go test ./cmd/... ./internal/...`
+- Alternative broad verification: `go test ./...`
+- Exporter package tests: `go test ./internal/app/exporter`
+- Verbose exporter tests: `go test ./internal/app/exporter -v`
+- Run a single test (primary): `go test ./internal/app/exporter -run '^TestName$' -v`
+- Run one named test (example): `go test ./internal/app/exporter -run '^TestExporterLinksQueriesToBaseFiles$' -v`
+- Run subset by regex: `go test ./internal/app/exporter -run 'Query|Base|Dataview' -v`
+- List test names quickly: `go test ./internal/app/exporter -list 'Test'`
+- Re-run by exact copied name: `go test ./internal/app/exporter -run '^ExactTestName$' -v`
+- Vet/lint baseline: `go vet ./...`
+- Format code: `gofmt -w ./cmd ./internal`
 
-## Feature areas to protect with tests
+## Single-Test Cookbook
 
-- Relation mapping (object/tag/status/type/file).
-- Multi-select/select preservation.
-- Query/dataview -> `.base` conversion.
-- Table/file/bookmark/link block conversion.
-- Deterministic naming and frontmatter filtering behavior.
+- Typical workflow:
+  - `go test ./internal/app/exporter -list 'Test'`
+  - pick one test name
+  - `go test ./internal/app/exporter -run '^PickedTestName$' -v`
+- If test relies on regex grouping, keep anchors `^...$` to avoid accidental extra matches.
+- For query conversion failures, start with a focused regex run (`-run 'Query|Base|Dataview'`).
+- For markdown/frontmatter failures, run nearby tests in `internal/app/exporter/exporter_test.go` first.
+- Keep `-v` on while debugging to improve signal for flaky/ordering issues.
 
-## Style
+## Style and Conventions (Go)
 
-- Prefer small local fixes over big refactors.
-- Do not add new dependencies unless explicitly requested.
-- `map[string]any` is acceptable for dynamic Anytype payload parts.
+- Follow idiomatic Go and let `gofmt` define formatting.
+- Imports are grouped standard library first, then third-party, then internal module imports.
+- Keep import aliases only when needed for clarity or collision avoidance (for example `anytypedomain`).
+- Prefer small pure helper functions over broad refactors.
+- Keep functions focused; split large logic only when it improves readability/testability.
+- Avoid introducing new dependencies unless explicitly requested.
+- Preserve existing public behavior and file/output schemas.
+
+## Types and Data Modeling
+
+- Dynamic Anytype payloads are intentionally modeled with `map[string]any` and `[]any`.
+- Convert dynamic values through existing helpers (`asString`, `asInt`, `anyToStringSlice`, etc).
+- Do not over-constrain unknown Anytype fields; preserve raw values when metadata is missing.
+- Prefer existing domain conversion entry points in `internal/domain/anytype`.
+- Keep struct field names and JSON tags aligned with snapshot schema.
+
+## Test Strategy Expectations
+
+- Prefer table-driven or focused behavior tests near changed logic.
+- Add/update tests for behavior-affecting changes in `internal/app/exporter/exporter_test.go`.
+- Cover relation mapping edge cases: object refs, status/tag options, file refs, type fallback.
+- Cover frontmatter filtering edge cases: hidden/dynamic/archived/include/exclude/empty behavior.
+- Cover query conversion edge cases: filter operators, sort/group/order, property path mapping.
+- Cover markdown rendering edge cases: tables, file/bookmark/link blocks, mentions, callouts/toggles.
+
+## Practical Agent Workflow
+
+- Before edits, locate existing pattern in the same package and mirror it.
+- Prefer changing one package at a time.
+- After edits run, in order when feasible:
+  - `go test ./cmd/... ./internal/...`
+  - `go vet ./...`
+- If touching only exporter behavior, at minimum run: `go test ./internal/app/exporter -v`.
+- If filenames/paths/frontmatter logic changed, validate resulting files in `obsidian-vault/` manually.
+
+## Common Pitfalls
+
+- Do not silently drop unknown Anytype details.
+- Do not assume one relation key source; ID and key both appear in exports.
+- Do not break relative path behavior for note links vs file links.
+- Do not alter output directory contract or naming stability.
+- Do not pull `anytype-heart` module commands/conventions into root tasks unintentionally.
+
+## A note to the agent
+
+We are building this together. When you learn something non-obvious, add it to the AGENTS.md file of the corresponding project so future changes can go faster.
