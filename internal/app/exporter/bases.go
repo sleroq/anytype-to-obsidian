@@ -352,6 +352,7 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 	}
 
 	mapped := convertPropertyValue(relationKey, value, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
+	mappedString := strings.TrimSpace(asString(mapped))
 
 	switch condition {
 	case "AndRange":
@@ -375,8 +376,14 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 	case "LessOrEqual":
 		return buildComparableExpression(prop, mapped, "<=", isDateCondition(relationKey, raw, relations), includeTime)
 	case "Like":
+		if mappedString == "" {
+			return ""
+		}
 		return "(" + prop + ".toString().contains(" + renderFilterLiteral(mapped) + "))"
 	case "NotLike":
+		if mappedString == "" {
+			return ""
+		}
 		return "!(" + prop + ".toString().contains(" + renderFilterLiteral(mapped) + "))"
 	case "In":
 		if values, ok := valueAsSlice(mapped); ok {

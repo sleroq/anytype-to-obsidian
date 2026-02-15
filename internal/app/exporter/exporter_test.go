@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	anytypedomain "github.com/sleroq/anytype-to-obsidian/internal/domain/anytype"
 )
 
 func TestExporterPreservesRelationsAndFields(t *testing.T) {
@@ -2131,6 +2133,59 @@ func TestBuildFilterExpressionSupportsAllAnytypeConditions(t *testing.T) {
 		if strings.TrimSpace(expr) == "" {
 			t.Fatalf("expected non-empty expression for condition %s", condition)
 		}
+	}
+}
+
+func TestBuildFilterExpressionSkipsEmptyLikeFilters(t *testing.T) {
+	relations := map[string]relationDef{
+		"name": {Key: "name", Name: "Name", Format: 0},
+	}
+
+	for _, condition := range []string{"Like", "NotLike"} {
+		expr := buildFilterExpression(map[string]any{
+			"RelationKey": "name",
+			"condition":   condition,
+			"value":       "",
+			"format":      "text",
+		}, relations, nil, nil, nil, nil, false)
+		if strings.TrimSpace(expr) != "" {
+			t.Fatalf("expected empty expression for %s with empty value, got %q", condition, expr)
+		}
+	}
+}
+
+func TestConvertAnytypeFilterNodeDropsEmptyLikeFilter(t *testing.T) {
+	relations := map[string]relationDef{
+		"name": {Key: "name", Name: "Name", Format: 0},
+		"tags": {Key: "tags", Name: "Tags", Format: anytypedomain.RelationFormatTag},
+	}
+
+	node, ok := convertAnytypeFilterNode(map[string]any{
+		"operator": "and",
+		"nestedFilters": []any{
+			map[string]any{
+				"RelationKey": "name",
+				"condition":   "Like",
+				"value":       "",
+				"format":      "text",
+			},
+			map[string]any{
+				"RelationKey": "tags",
+				"condition":   "In",
+				"value":       []any{"testing"},
+				"format":      "tag",
+			},
+		},
+	}, relations, nil, nil, nil, nil, false)
+
+	if !ok {
+		t.Fatalf("expected filter node to be built")
+	}
+	if node.Op != "and" || len(node.Items) != 1 {
+		t.Fatalf("expected only one nested filter to remain, got %+v", node)
+	}
+	if !strings.Contains(node.Items[0].Expr, "testing") {
+		t.Fatalf("expected remaining filter to target tags, got %q", node.Items[0].Expr)
 	}
 }
 
