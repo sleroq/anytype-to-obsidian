@@ -523,6 +523,94 @@ func TestExporterCanDisablePictureToCoverRename(t *testing.T) {
 	}
 }
 
+func TestExporterConvertsAnytypeIconPropertiesForPrettyProperties(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	if err := os.WriteFile(filepath.Join(input, "files", "icon.png"), []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, 0o644); err != nil {
+		t.Fatalf("write icon file: %v", err)
+	}
+
+	writePBJSON(t, filepath.Join(input, "filesObjects", "icon-file.pb.json"), "FileObject", map[string]any{
+		"id":     "icon-file",
+		"name":   "icon",
+		"source": "files/icon.png",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":        "obj-1",
+		"name":      "Task One",
+		"iconEmoji": "✨",
+		"iconImage": "icon-file",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "icon: \"files/icon.png\"") {
+		t.Fatalf("expected Pretty Properties icon from iconImage with shortest path, got:\n%s", note)
+	}
+	if strings.Contains(note, "iconEmoji:") || strings.Contains(note, "iconImage:") {
+		t.Fatalf("expected Anytype icon properties to be merged into icon, got:\n%s", note)
+	}
+}
+
+func TestExporterCanDisablePrettyPropertiesIconConversion(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":        "obj-1",
+		"name":      "Task One",
+		"iconEmoji": "✨",
+		"iconImage": "icon-file",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, DisablePrettyPropertyIcon: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if strings.Contains(note, "\nicon:") {
+		t.Fatalf("expected icon property to be absent when Pretty Properties icon conversion is disabled, got:\n%s", note)
+	}
+	if !strings.Contains(note, "iconEmoji: \"✨\"") || !strings.Contains(note, "iconImage: \"icon-file\"") {
+		t.Fatalf("expected original Anytype icon properties when conversion is disabled, got:\n%s", note)
+	}
+}
+
 func TestExporterAddsBannerFromCoverImage(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")

@@ -49,6 +49,7 @@ go run ./cmd/anytype-to-obsidian -input ./Anytype-exported-json -output ./result
 - `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.
 - `-link-as-note-properties`: comma-separated relation keys/names to export as note links (for example `type,tag,status`).
 - `-disable-picture-to-cover`: keep the original `picture` property name instead of exporting it as `cover`.
+- `-disable-pretty-properties-icon`: keep original `iconImage` / `iconEmoji` properties instead of exporting Pretty Properties-compatible `icon`.
 - `-disable-iconize-icons`: disable Iconize plugin data/icon export.
 
 Property precedence:

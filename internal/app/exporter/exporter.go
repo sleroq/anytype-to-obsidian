@@ -29,6 +29,7 @@ type Exporter struct {
 	InputDir                  string
 	OutputDir                 string
 	DisableIconizeIcons       bool
+	DisablePrettyPropertyIcon bool
 	DisablePictureToCover     bool
 	RunPrettier               bool
 	FilenameEscaping          string
@@ -516,6 +517,7 @@ func (e Exporter) Run() (Stats, error) {
 			e.IncludeDynamicProperties,
 			e.IncludeArchivedProperties,
 			filters,
+			!e.DisablePrettyPropertyIcon,
 			!e.DisablePictureToCover,
 		)
 		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects, excalidrawEmbeds)
@@ -571,7 +573,7 @@ func tryRunPrettier(outputDir string) error {
 	return prettierCommandRunner(outputDir)
 }
 
-func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters, pictureToCover bool) string {
+func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesByID map[string]typeDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, includeDynamicProperties bool, includeArchivedProperties bool, filters propertyFilters, prettyPropertyIcon bool, pictureToCover bool) string {
 	keys, includeByType, dateByType := orderedFrontmatterKeys(obj, relations, typesByID)
 
 	var buf bytes.Buffer
@@ -587,8 +589,17 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 	if includeAnytypeID {
 		usedKeys["anytype_id"] = struct{}{}
 	}
+	if prettyPropertyIcon {
+		if iconValue, ok := prettyPropertyIconValue(obj.Details, fileObjects, sourceNotePath); ok {
+			writeYAMLKeyValue(&buf, "icon", iconValue)
+			usedKeys["icon"] = struct{}{}
+		}
+	}
 	for _, k := range keys {
 		rel, hasRel := relations[k]
+		if prettyPropertyIcon && isAnytypeIconProperty(k, rel, hasRel) {
+			continue
+		}
 		if !shouldIncludeFrontmatterProperty(k, rel, hasRel, includeByType[k], includeDynamicProperties, includeArchivedProperties, filters) {
 			continue
 		}
@@ -865,6 +876,35 @@ func isPictureProperty(rawKey string, rel relationDef, hasRel bool) bool {
 		return false
 	}
 	return normalizePropertyKey(rel.Key) == "picture"
+}
+
+func isAnytypeIconProperty(rawKey string, rel relationDef, hasRel bool) bool {
+	rawNorm := normalizePropertyKey(rawKey)
+	if rawNorm == "iconemoji" || rawNorm == "iconimage" {
+		return true
+	}
+	if !hasRel {
+		return false
+	}
+	relNorm := normalizePropertyKey(rel.Key)
+	return relNorm == "iconemoji" || relNorm == "iconimage"
+}
+
+func prettyPropertyIconValue(details map[string]any, fileObjects map[string]string, sourceNotePath string) (any, bool) {
+	imageID := strings.TrimSpace(asString(details["iconImage"]))
+	if imageID != "" {
+		if source := strings.TrimSpace(fileObjects[imageID]); source != "" {
+			return shortestPathTarget(sourceNotePath, source), true
+		}
+		return imageID, true
+	}
+
+	emoji := strings.TrimSpace(asString(details["iconEmoji"]))
+	if emoji != "" {
+		return emoji, true
+	}
+
+	return nil, false
 }
 
 func isTagProperty(rawKey string, rel relationDef, hasRel bool) bool {
@@ -2385,6 +2425,21 @@ func relativePathTarget(sourcePath string, targetPath string) string {
 		return targetPath
 	}
 	return rel
+}
+
+func shortestPathTarget(sourcePath string, targetPath string) string {
+	full := filepath.ToSlash(strings.TrimSpace(targetPath))
+	if full == "" {
+		return ""
+	}
+	rel := relativePathTarget(sourcePath, full)
+	if rel == "" {
+		return full
+	}
+	if len(rel) < len(full) {
+		return rel
+	}
+	return full
 }
 
 func renderTable(byID map[string]block, tableBlock block) string {

@@ -22,6 +22,7 @@ type cliOptions struct {
 	Input                     string
 	Output                    string
 	DisableIconizeIcons       bool
+	DisablePrettyPropertyIcon bool
 	DisablePictureToCover     bool
 	FilenameEscaping          string
 	RunPrettier               bool
@@ -61,6 +62,7 @@ func main() {
 		flag.StringVar(&opts.Input, "input", opts.Input, "Path to Anytype-json export directory")
 		flag.StringVar(&opts.Output, "output", opts.Output, "Path to output Obsidian vault")
 		flag.BoolVar(&opts.DisableIconizeIcons, "disable-iconize-icons", opts.DisableIconizeIcons, "Disable exporting icons to .obsidian/plugins/obsidian-icon-folder/data.json")
+		flag.BoolVar(&opts.DisablePrettyPropertyIcon, "disable-pretty-properties-icon", opts.DisablePrettyPropertyIcon, "Disable converting iconImage/iconEmoji to the Pretty Properties icon frontmatter")
 		flag.BoolVar(&opts.DisablePictureToCover, "disable-picture-to-cover", opts.DisablePictureToCover, "Disable renaming Anytype picture property to cover")
 		flag.BoolVar(&opts.RunPrettier, "prettier", opts.RunPrettier, "Try to run npx prettier on exported files (set to false to disable)")
 		flag.StringVar(&opts.FilenameEscaping, "filename-escaping", opts.FilenameEscaping, "Filename escaping mode: auto, posix, windows")
@@ -77,6 +79,7 @@ func main() {
 		InputDir:                  opts.Input,
 		OutputDir:                 opts.Output,
 		DisableIconizeIcons:       opts.DisableIconizeIcons,
+		DisablePrettyPropertyIcon: opts.DisablePrettyPropertyIcon,
 		DisablePictureToCover:     opts.DisablePictureToCover,
 		RunPrettier:               opts.RunPrettier,
 		FilenameEscaping:          opts.FilenameEscaping,
@@ -102,6 +105,7 @@ func defaultCLIOptions() cliOptions {
 		Input:                     "./Anytype-json",
 		Output:                    "./obsidian-vault",
 		DisableIconizeIcons:       false,
+		DisablePrettyPropertyIcon: false,
 		DisablePictureToCover:     false,
 		FilenameEscaping:          "auto",
 		RunPrettier:               true,
@@ -135,6 +139,7 @@ func newCLIModel(defaults cliOptions) *cliModel {
 		{key: "input", label: "Input directory", description: "Path to Anytype JSON export folder.", value: defaults.Input},
 		{key: "output", label: "Output vault directory", description: "Path where the Obsidian vault will be written.", value: defaults.Output},
 		{key: "disableIconizeIcons", label: "Disable Iconize export", description: "Skip writing Iconize plugin data and generated Anytype icon pack files.", value: fmt.Sprintf("%t", defaults.DisableIconizeIcons)},
+		{key: "disablePrettyPropertyIcon", label: "Disable Pretty Properties icon conversion", description: "Keep Anytype iconImage/iconEmoji properties instead of exporting a single icon property.", value: fmt.Sprintf("%t", defaults.DisablePrettyPropertyIcon)},
 		{key: "disablePictureToCover", label: "Disable picture->cover rename", description: "Keep Anytype picture property name instead of renaming to cover.", value: fmt.Sprintf("%t", defaults.DisablePictureToCover)},
 		{key: "prettier", label: "Run Prettier", description: "Format exported markdown with npx prettier when available.", value: fmt.Sprintf("%t", defaults.RunPrettier)},
 		{key: "filenameEscaping", label: "Filename escaping mode", description: "How to sanitize filenames: auto, posix, or windows.", value: defaults.FilenameEscaping},
@@ -279,6 +284,12 @@ func (m *cliModel) resolveOptions() (cliOptions, error) {
 				return opts, fmt.Errorf("field disable-iconize-icons: %w", err)
 			}
 			opts.DisableIconizeIcons = parsed
+		case "disablePrettyPropertyIcon":
+			parsed, err := parseInteractiveBool(value)
+			if err != nil {
+				return opts, fmt.Errorf("field disable-pretty-properties-icon: %w", err)
+			}
+			opts.DisablePrettyPropertyIcon = parsed
 		case "prettier":
 			parsed, err := parseInteractiveBool(value)
 			if err != nil {
