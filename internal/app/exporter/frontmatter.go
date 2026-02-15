@@ -48,10 +48,13 @@ func renderFrontmatter(obj objectInfo, relations map[string]relationDef, typesBy
 		}
 		v := obj.Details[k]
 		converted := convertPropertyValue(k, v, relations, optionsByID, notes, sourceNotePath, objectNamesByID, fileObjects, dateByType[k], filters.hasLinkAsNote(k, rel, hasRel))
+		outKey := frontmatterKey(k, rel, hasRel, pictureToCover)
+		if outKey == "tags" {
+			converted = sanitizeObsidianTagValue(converted)
+		}
 		if filters.excludeEmpty && isEmptyFrontmatterValue(converted) {
 			continue
 		}
-		outKey := frontmatterKey(k, rel, hasRel, pictureToCover)
 		if _, exists := usedKeys[outKey]; exists {
 			outKey = k
 		}
@@ -656,6 +659,109 @@ func sanitizeYAMLKey(s string) string {
 		return "field"
 	}
 	return s
+}
+
+func sanitizeObsidianTagValue(value any) any {
+	sanitizeSlice := func(items []string) []string {
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			tag := sanitizeObsidianTag(item)
+			if tag == "" {
+				continue
+			}
+			out = append(out, tag)
+		}
+		return out
+	}
+
+	switch v := value.(type) {
+	case string:
+		return sanitizeObsidianTag(v)
+	case []string:
+		return sanitizeSlice(v)
+	case []any:
+		items := make([]string, 0, len(v))
+		for _, item := range v {
+			s := asString(item)
+			if s == "" {
+				continue
+			}
+			items = append(items, s)
+		}
+		return sanitizeSlice(items)
+	default:
+		return value
+	}
+}
+
+func sanitizeObsidianTag(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "[[") && strings.HasSuffix(raw, "]]") {
+		return raw
+	}
+
+	parts := strings.Split(raw, "/")
+	cleanedParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		cleaned := sanitizeObsidianTagPart(part)
+		if cleaned == "" {
+			continue
+		}
+		cleanedParts = append(cleanedParts, cleaned)
+	}
+
+	if len(cleanedParts) == 0 {
+		return ""
+	}
+
+	tag := strings.Join(cleanedParts, "/")
+	hasNonDigit := false
+	for _, r := range tag {
+		if r == '/' {
+			continue
+		}
+		if !unicode.IsDigit(r) {
+			hasNonDigit = true
+			break
+		}
+	}
+	if !hasNonDigit {
+		tag = "y" + tag
+	}
+
+	return tag
+}
+
+func sanitizeObsidianTagPart(part string) string {
+	part = strings.TrimSpace(part)
+	if part == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range part {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '_', r == '-':
+			b.WriteRune(r)
+			lastHyphen = r == '-'
+		case unicode.IsSpace(r):
+			if !lastHyphen && b.Len() > 0 {
+				b.WriteRune('-')
+				lastHyphen = true
+			}
+		default:
+			if !lastHyphen && b.Len() > 0 {
+				b.WriteRune('-')
+				lastHyphen = true
+			}
+		}
+	}
+
+	return strings.Trim(b.String(), "-")
 }
 
 func sanitizeName(s string, mode string) string {

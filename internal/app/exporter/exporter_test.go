@@ -209,6 +209,74 @@ func TestExporterIncludesArchivedPropertiesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestExporterSanitizesObsidianTags(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "relations", "rel-tag.pb.json"), "STRelation", map[string]any{
+		"id":             "rel-tag",
+		"relationKey":    "tag",
+		"relationFormat": 11,
+		"name":           "Tag",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-space.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-tag-space",
+		"name": "Project Alpha",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-symbols.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-tag-symbols",
+		"name": "R&D+AI",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-nested.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-tag-nested",
+		"name": "inbox / to read",
+	}, nil)
+	writePBJSON(t, filepath.Join(input, "relationsOptions", "opt-tag-number.pb.json"), "STRelationOption", map[string]any{
+		"id":   "opt-tag-number",
+		"name": "1984",
+	}, nil)
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "Task One",
+		"tag":  []any{"opt-tag-space", "opt-tag-symbols", "opt-tag-nested", "opt-tag-number"},
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Task One", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Task One.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	for _, expected := range []string{"- \"Project-Alpha\"", "- \"R-D-AI\"", "- \"inbox/to-read\"", "- \"y1984\""} {
+		if !strings.Contains(note, expected) {
+			t.Fatalf("expected sanitized tag %s, got:\n%s", expected, note)
+		}
+	}
+
+	for _, unexpected := range []string{"Project Alpha", "R&D+AI", "inbox / to read", "\"1984\""} {
+		if strings.Contains(note, unexpected) {
+			t.Fatalf("expected unsanitized tag %q to be absent, got:\n%s", unexpected, note)
+		}
+	}
+}
+
 func TestExporterResolvesStatusFromObjectNameWhenRelationOptionMissing(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
