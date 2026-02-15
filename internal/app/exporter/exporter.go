@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,6 +22,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	anytypedomain "github.com/sleroq/anytype-to-obsidian/internal/domain/anytype"
 	"github.com/sleroq/anytype-to-obsidian/internal/infra/anytypejson"
+	"github.com/sleroq/anytype-to-obsidian/internal/infra/exportfs"
 )
 
 type Exporter struct {
@@ -256,6 +255,139 @@ func isTerminal(f *os.File) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
+type exportDirs struct {
+	noteDir       string
+	rawDir        string
+	templateDir   string
+	baseDir       string
+	excalidrawDir string
+	anytypeDir    string
+}
+
+func (e Exporter) prepareExportDirs() (exportDirs, error) {
+	dirs := exportDirs{
+		noteDir:       filepath.Join(e.OutputDir, "notes"),
+		rawDir:        filepath.Join(e.OutputDir, "_anytype", "raw"),
+		templateDir:   filepath.Join(e.OutputDir, "templates"),
+		baseDir:       filepath.Join(e.OutputDir, "bases"),
+		excalidrawDir: filepath.Join(e.OutputDir, "Excalidraw"),
+		anytypeDir:    filepath.Join(e.OutputDir, "_anytype"),
+	}
+	for _, dir := range []string{dirs.noteDir, dirs.templateDir, dirs.baseDir, dirs.excalidrawDir, dirs.rawDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return exportDirs{}, err
+		}
+	}
+	return dirs, nil
+}
+
+func writeAnytypeReadme(anytypeDir string) error {
+	rawReadme := strings.TrimSpace(`This folder stores exporter metadata for this vault.
+
+What is inside:
+- index.json with deterministic object ID -> note path mapping
+- raw/ with one JSON sidecar per exported object: <object-id>.json
+- each raw sidecar keeps original Anytype fields: id, sbType, details
+
+Why it exists:
+- Preserves metadata that may not fit cleanly into Obsidian markdown/frontmatter
+- Helps with debugging and future re-mapping without re-reading .pb.json snapshots
+
+Can I delete this folder?
+	- Yes, if you do not need exporter metadata.
+- Deleting it will not break existing markdown notes in this export.
+- If needed, you can restore it by running the exporter again.`) + "\n"
+	if err := os.MkdirAll(anytypeDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(anytypeDir, "README.md"), []byte(rawReadme), 0o644); err != nil {
+		return fmt.Errorf("write raw metadata readme: %w", err)
+	}
+	return nil
+}
+
+func buildNotePathIndex(allObjects []objectInfo, filenameEscaping string) map[string]string {
+	notePathByID := make(map[string]string, len(allObjects))
+	used := map[string]int{}
+	for _, obj := range allObjects {
+		title := inferObjectTitle(obj)
+		base := sanitizeName(title, filenameEscaping)
+		if base == "" {
+			base = obj.ID
+		}
+		usedKey := filenameCollisionKey(base, filenameEscaping)
+		n := used[usedKey]
+		used[usedKey] = n + 1
+		if n > 0 {
+			base = base + "-" + strconv.Itoa(n+1)
+		}
+		notePathByID[obj.ID] = filepath.ToSlash(filepath.Join("notes", base+".md"))
+	}
+	return notePathByID
+}
+
+func buildTemplatePathIndex(templates []templateInfo, typesByID map[string]typeDef, filenameEscaping string) map[string]string {
+	templatePathByID := make(map[string]string, len(templates))
+	usedTemplateNames := map[string]int{}
+	for _, tmpl := range templates {
+		typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
+		templateName := inferTemplateTitle(tmpl)
+		if strings.TrimSpace(templateName) == "" {
+			templateName = "Template"
+		}
+		base := sanitizeName(typeName+" - "+templateName, filenameEscaping)
+		if base == "" {
+			base = sanitizeName(typeName+" - Template", filenameEscaping)
+		}
+		if base == "" {
+			base = "Template"
+		}
+		usedKey := filenameCollisionKey(base, filenameEscaping)
+		n := usedTemplateNames[usedKey]
+		usedTemplateNames[usedKey] = n + 1
+		if n > 0 {
+			base = base + "-" + strconv.Itoa(n+1)
+		}
+		templatePathByID[tmpl.ID] = filepath.ToSlash(filepath.Join("templates", base+".md"))
+	}
+	return templatePathByID
+}
+
+func buildObjectNameIndexes(allObjects []objectInfo, typesByID map[string]typeDef, optionsByID map[string]relationOption) (map[string]objectInfo, map[string]string, map[string]string) {
+	idToObject := make(map[string]objectInfo, len(allObjects))
+	objectNamesByID := make(map[string]string, len(allObjects)+len(typesByID)+len(optionsByID))
+	for _, o := range allObjects {
+		idToObject[o.ID] = o
+		if name := strings.TrimSpace(o.Name); name != "" {
+			objectNamesByID[o.ID] = name
+		}
+	}
+	for id, typeInfo := range typesByID {
+		name := strings.TrimSpace(typeInfo.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := objectNamesByID[id]; exists {
+			continue
+		}
+		objectNamesByID[id] = name
+	}
+
+	optionNamesByID := make(map[string]string, len(optionsByID))
+	for id, option := range optionsByID {
+		optionNamesByID[id] = option.Name
+		name := strings.TrimSpace(option.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := objectNamesByID[id]; exists {
+			continue
+		}
+		objectNamesByID[id] = name
+	}
+	return idToObject, objectNamesByID, optionNamesByID
+}
+
 func (e Exporter) Run() (Stats, error) {
 	if e.InputDir == "" || e.OutputDir == "" {
 		return Stats{}, fmt.Errorf("input and output directories are required")
@@ -281,45 +413,12 @@ func (e Exporter) Run() (Stats, error) {
 	templates := exportData.Templates
 	typesByID := exportData.TypesByID
 
-	noteDir := filepath.Join(e.OutputDir, "notes")
-	rawDir := filepath.Join(e.OutputDir, "_anytype", "raw")
-	templateDir := filepath.Join(e.OutputDir, "templates")
-	baseDir := filepath.Join(e.OutputDir, "bases")
-	excalidrawDir := filepath.Join(e.OutputDir, "Excalidraw")
-	if err := os.MkdirAll(noteDir, 0o755); err != nil {
+	dirs, err := e.prepareExportDirs()
+	if err != nil {
 		return Stats{}, err
 	}
-	if err := os.MkdirAll(templateDir, 0o755); err != nil {
+	if err := writeAnytypeReadme(dirs.anytypeDir); err != nil {
 		return Stats{}, err
-	}
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
-		return Stats{}, err
-	}
-	if err := os.MkdirAll(excalidrawDir, 0o755); err != nil {
-		return Stats{}, err
-	}
-	if err := os.MkdirAll(rawDir, 0o755); err != nil {
-		return Stats{}, err
-	}
-
-	anytypeDir := filepath.Join(e.OutputDir, "_anytype")
-	rawReadme := strings.TrimSpace(`This folder stores exporter metadata for this vault.
-
-What is inside:
-- index.json with deterministic object ID -> note path mapping
-- raw/ with one JSON sidecar per exported object: <object-id>.json
-- each raw sidecar keeps original Anytype fields: id, sbType, details
-
-Why it exists:
-- Preserves metadata that may not fit cleanly into Obsidian markdown/frontmatter
-- Helps with debugging and future re-mapping without re-reading .pb.json snapshots
-
-Can I delete this folder?
-	- Yes, if you do not need exporter metadata.
-- Deleting it will not break existing markdown notes in this export.
-- If needed, you can restore it by running the exporter again.`) + "\n"
-	if err := os.WriteFile(filepath.Join(anytypeDir, "README.md"), []byte(rawReadme), 0o644); err != nil {
-		return Stats{}, fmt.Errorf("write raw metadata readme: %w", err)
 	}
 
 	copiedFiles, err := copyDir(filepath.Join(e.InputDir, "files"), filepath.Join(e.OutputDir, "files"))
@@ -343,81 +442,9 @@ Can I delete this folder?
 	}
 	defer progressBar.Close()
 
-	notePathByID := make(map[string]string, len(allObjects))
-	used := map[string]int{}
-	for _, obj := range allObjects {
-		title := inferObjectTitle(obj)
-		base := sanitizeName(title, filenameEscaping)
-		if base == "" {
-			base = obj.ID
-		}
-		usedKey := filenameCollisionKey(base, filenameEscaping)
-		n := used[usedKey]
-		used[usedKey] = n + 1
-		if n > 0 {
-			base = base + "-" + strconv.Itoa(n+1)
-		}
-		notePathByID[obj.ID] = filepath.ToSlash(filepath.Join("notes", base+".md"))
-	}
-
-	templatePathByID := make(map[string]string, len(templates))
-	usedTemplateNames := map[string]int{}
-	for _, tmpl := range templates {
-		typeName := inferTemplateTypeName(tmpl.TargetTypeID, typesByID)
-		templateName := inferTemplateTitle(tmpl)
-		if strings.TrimSpace(templateName) == "" {
-			templateName = "Template"
-		}
-		base := sanitizeName(typeName+" - "+templateName, filenameEscaping)
-		if base == "" {
-			base = sanitizeName(typeName+" - Template", filenameEscaping)
-		}
-		if base == "" {
-			base = "Template"
-		}
-		usedKey := filenameCollisionKey(base, filenameEscaping)
-		n := usedTemplateNames[usedKey]
-		usedTemplateNames[usedKey] = n + 1
-		if n > 0 {
-			base = base + "-" + strconv.Itoa(n+1)
-		}
-		templatePathByID[tmpl.ID] = filepath.ToSlash(filepath.Join("templates", base+".md"))
-	}
-
-	idToObject := make(map[string]objectInfo, len(allObjects))
-	objectNamesByID := make(map[string]string, len(allObjects)+len(typesByID)+len(optionsByID))
-	for _, o := range allObjects {
-		idToObject[o.ID] = o
-		if name := strings.TrimSpace(o.Name); name != "" {
-			objectNamesByID[o.ID] = name
-		}
-	}
-	for id, typeInfo := range typesByID {
-		name := strings.TrimSpace(typeInfo.Name)
-		if name == "" {
-			continue
-		}
-		if _, exists := objectNamesByID[id]; exists {
-			continue
-		}
-		objectNamesByID[id] = name
-	}
-
-	for id, option := range optionsByID {
-		name := strings.TrimSpace(option.Name)
-		if name == "" {
-			continue
-		}
-		if _, exists := objectNamesByID[id]; exists {
-			continue
-		}
-		objectNamesByID[id] = name
-	}
-
-	optionNamesByID := make(map[string]string, len(optionsByID))
-	for id, option := range optionsByID {
-		optionNamesByID[id] = option.Name
-	}
+	notePathByID := buildNotePathIndex(allObjects, filenameEscaping)
+	templatePathByID := buildTemplatePathIndex(templates, typesByID, filenameEscaping)
+	idToObject, objectNamesByID, optionNamesByID := buildObjectNameIndexes(allObjects, typesByID, optionsByID)
 
 	usedExcalidrawNames := map[string]int{}
 
@@ -439,7 +466,7 @@ Can I delete this folder?
 		if n > 0 {
 			baseName = baseName + "-" + strconv.Itoa(n+1)
 		}
-		basePath := filepath.Join(baseDir, baseName+".base")
+		basePath := filepath.Join(dirs.baseDir, baseName+".base")
 		if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write base %s: %w", obj.ID, err)
 		}
@@ -472,7 +499,7 @@ Can I delete this folder?
 			return Stats{}, err
 		}
 
-		excalidrawEmbeds, err := exportExcalidrawDrawings(obj, noteRelPath, excalidrawDir, filenameEscaping, usedExcalidrawNames)
+		excalidrawEmbeds, err := exportExcalidrawDrawings(obj, noteRelPath, dirs.excalidrawDir, filenameEscaping, usedExcalidrawNames)
 		if err != nil {
 			return Stats{}, fmt.Errorf("export excalidraw %s: %w", obj.ID, err)
 		}
@@ -499,7 +526,7 @@ Can I delete this folder?
 			return Stats{}, fmt.Errorf("apply note timestamps %s: %w", obj.ID, err)
 		}
 
-		rawPath := filepath.Join(rawDir, obj.ID+".json")
+		rawPath := filepath.Join(dirs.rawDir, obj.ID+".json")
 		rawPayload := map[string]any{
 			"id":      obj.ID,
 			"sbType":  obj.SbType,
@@ -520,10 +547,10 @@ Can I delete this folder?
 
 	idx := indexFile{Notes: notePathByID}
 	indexBytes, _ := json.MarshalIndent(idx, "", "  ")
-	if err := os.MkdirAll(anytypeDir, 0o755); err != nil {
+	if err := os.MkdirAll(dirs.anytypeDir, 0o755); err != nil {
 		return Stats{}, err
 	}
-	if err := os.WriteFile(filepath.Join(anytypeDir, "index.json"), indexBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dirs.anytypeDir, "index.json"), indexBytes, 0o644); err != nil {
 		return Stats{}, err
 	}
 	progressBar.Advance("writing index")
@@ -680,7 +707,7 @@ func isDateRelationRef(ref string, relations map[string]relationDef) bool {
 	if !ok {
 		return false
 	}
-	return rel.Format == 4
+	return rel.Format == anytypedomain.RelationFormatDate
 }
 
 func resolveTypeRelationRefToDetailKey(ref string, details map[string]any, relations map[string]relationDef) string {
@@ -891,110 +918,20 @@ func isLikelyCIDKey(s string) bool {
 }
 
 func convertPropertyValue(key string, value any, relations map[string]relationDef, optionsByID map[string]string, notes map[string]string, sourceNotePath string, objectNamesByID map[string]string, fileObjects map[string]string, dateByType bool, linkAsNote bool) any {
-	rel, hasRel := relations[key]
-	listValue := isListValue(value)
-	if !hasRel {
-		if dateByType {
-			return formatDateValue(value)
-		}
-		return value
-	}
-
-	switch rel.Format {
-	case 100:
-		ids := anyToStringSlice(value)
-		if len(ids) == 0 {
-			if s := asString(value); s != "" {
-				ids = []string{s}
-			}
-		}
-		if len(ids) == 0 {
-			return value
-		}
-		out := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if note, ok := notes[id]; ok {
-				out = append(out, "[["+relativeWikiTarget(sourceNotePath, note)+"]]")
-			} else if name, ok := objectNamesByID[id]; ok && strings.TrimSpace(name) != "" {
-				out = append(out, name)
-			} else {
-				out = append(out, id)
-			}
-		}
-		if listValue {
-			return out
-		}
-		if len(out) == 1 {
-			return out[0]
-		}
-		return out
-	case 11, 3:
-		ids := anyToStringSlice(value)
-		if len(ids) == 0 {
-			if s := asString(value); s != "" {
-				ids = []string{s}
-			}
-		}
-		if len(ids) == 0 {
-			return value
-		}
-		out := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if linkAsNote {
-				if note, ok := notes[id]; ok {
-					out = append(out, "[["+relativeWikiTarget(sourceNotePath, note)+"]]")
-					continue
-				}
-			}
-			if n, ok := optionsByID[id]; ok && n != "" {
-				out = append(out, n)
-			} else if name, ok := objectNamesByID[id]; ok && strings.TrimSpace(name) != "" {
-				out = append(out, name)
-			} else {
-				out = append(out, id)
-			}
-		}
-		if listValue {
-			return out
-		}
-		if len(out) == 1 {
-			return out[0]
-		}
-		return out
-	case 5:
-		ids := anyToStringSlice(value)
-		out := make([]string, 0, len(ids))
-		for _, id := range ids {
-			if src, ok := fileObjects[id]; ok {
-				out = append(out, relativePathTarget(sourceNotePath, src))
-			} else {
-				out = append(out, id)
-			}
-		}
-		if listValue {
-			return out
-		}
-		if len(out) == 1 {
-			return out[0]
-		}
-		if len(out) > 1 {
-			return out
-		}
-		return value
-	case 4:
-		return formatDateValue(value)
-	default:
-		return value
-	}
-}
-
-func isListValue(v any) bool {
-	switch v.(type) {
-	case []any, []string:
-		return true
-	default:
-		return false
-	}
+	return anytypedomain.ConvertPropertyValue(
+		key,
+		value,
+		relations,
+		optionsByID,
+		notes,
+		sourceNotePath,
+		objectNamesByID,
+		fileObjects,
+		dateByType,
+		linkAsNote,
+		relativeWikiTarget,
+		relativePathTarget,
+	)
 }
 
 func buildSyntheticLinkObjects(objects []objectInfo, relations map[string]relationDef, optionsByID map[string]relationOption, typesByID map[string]typeDef, filters propertyFilters) []objectInfo {
@@ -1026,11 +963,11 @@ func buildSyntheticLinkObjects(objects []objectInfo, relations map[string]relati
 			}
 			for _, id := range ids {
 				switch rel.Format {
-				case 100:
+				case anytypedomain.RelationFormatObjectRef:
 					if _, ok := typesByID[id]; ok {
 						typeIDs[id] = struct{}{}
 					}
-				case 11, 3:
+				case anytypedomain.RelationFormatStatus, anytypedomain.RelationFormatTag:
 					if _, ok := optionsByID[id]; ok {
 						optionIDs[id] = struct{}{}
 					}
@@ -1099,139 +1036,23 @@ func buildSyntheticLinkObjects(objects []objectInfo, relations map[string]relati
 }
 
 func formatDateValue(value any) any {
-	toUnixSeconds := func(v float64) int64 {
-		sec := int64(v)
-		if sec > 1_000_000_000_000 || sec < -1_000_000_000_000 {
-			sec = sec / 1000
-		}
-		return sec
-	}
-
-	switch t := value.(type) {
-	case float64:
-		return time.Unix(toUnixSeconds(t), 0).UTC().Format("2006-01-02")
-	case int:
-		return time.Unix(toUnixSeconds(float64(t)), 0).UTC().Format("2006-01-02")
-	case string:
-		s := strings.TrimSpace(t)
-		if s == "" {
-			return value
-		}
-		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-			sec := i
-			if sec > 1_000_000_000_000 || sec < -1_000_000_000_000 {
-				sec = sec / 1000
-			}
-			return time.Unix(sec, 0).UTC().Format("2006-01-02")
-		}
-		if tm, err := time.Parse(time.RFC3339, s); err == nil {
-			return tm.UTC().Format("2006-01-02")
-		}
-		if tm, err := time.Parse("2006-01-02", s); err == nil {
-			return tm.Format("2006-01-02")
-		}
-		return value
-	default:
-		return value
-	}
+	return anytypedomain.FormatDateValue(value)
 }
 
 func applyExportedFileTimes(path string, details map[string]any) error {
-	createdTime, hasCreated := firstParsedTimestamp(details, createdDateKeys)
-	atime, mtime, ok := anytypeTimestamps(details)
-	if !ok {
-		return nil
-	}
-	if err := os.Chtimes(path, atime, mtime); err != nil {
-		return err
-	}
-	if hasCreated {
-		if err := setFileCreationTime(path, createdTime); err != nil {
-			return err
-		}
-	}
-	return nil
+	return exportfs.ApplyExportedFileTimes(path, details, createdDateKeys, changedDateKeys, modifiedDateKeys, setFileCreationTime)
 }
 
 func anytypeTimestamps(details map[string]any) (time.Time, time.Time, bool) {
-	created, hasCreated := firstParsedTimestamp(details, createdDateKeys)
-	changed, _ := firstParsedTimestamp(details, changedDateKeys)
-	modified, hasModified := firstParsedTimestamp(details, modifiedDateKeys)
-
-	mtime := modified
-	if !hasModified {
-		mtime = changed
-	}
-	if mtime.IsZero() {
-		mtime = created
-	}
-
-	atime := created
-	if !hasCreated {
-		atime = changed
-	}
-	if atime.IsZero() {
-		atime = mtime
-	}
-
-	if atime.IsZero() || mtime.IsZero() {
-		return time.Time{}, time.Time{}, false
-	}
-	return atime, mtime, true
+	return anytypedomain.AnytypeTimestamps(details, createdDateKeys, changedDateKeys, modifiedDateKeys)
 }
 
 func firstParsedTimestamp(details map[string]any, keys []string) (time.Time, bool) {
-	if len(details) == 0 {
-		return time.Time{}, false
-	}
-	for _, key := range keys {
-		raw, ok := details[key]
-		if !ok {
-			continue
-		}
-		parsed, ok := parseAnytypeTimestamp(raw)
-		if ok {
-			return parsed, true
-		}
-	}
-	return time.Time{}, false
+	return anytypedomain.FirstParsedTimestamp(details, keys)
 }
 
 func parseAnytypeTimestamp(value any) (time.Time, bool) {
-	toUnixSeconds := func(v int64) int64 {
-		if v > 1_000_000_000_000 || v < -1_000_000_000_000 {
-			return v / 1000
-		}
-		return v
-	}
-
-	switch t := value.(type) {
-	case float64:
-		sec := toUnixSeconds(int64(t))
-		return time.Unix(sec, 0).UTC(), true
-	case int:
-		sec := toUnixSeconds(int64(t))
-		return time.Unix(sec, 0).UTC(), true
-	case int64:
-		sec := toUnixSeconds(t)
-		return time.Unix(sec, 0).UTC(), true
-	case string:
-		s := strings.TrimSpace(t)
-		if s == "" {
-			return time.Time{}, false
-		}
-		if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return time.Unix(toUnixSeconds(i), 0).UTC(), true
-		}
-		if tm, err := time.Parse(time.RFC3339, s); err == nil {
-			return tm.UTC(), true
-		}
-		if tm, err := time.Parse("2006-01-02", s); err == nil {
-			return tm.UTC(), true
-		}
-	}
-
-	return time.Time{}, false
+	return anytypedomain.ParseAnytypeTimestamp(value)
 }
 
 func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]string, sourceNotePath string, fileObjects map[string]string, excalidrawEmbeds map[string]string) string {
@@ -1854,7 +1675,7 @@ func dateRangeFromQuickOption(quickOption string, value any, now time.Time) (tim
 }
 
 func isDateCondition(relationKey string, raw map[string]any, relations map[string]relationDef) bool {
-	if rel, ok := relations[relationKey]; ok && rel.Format == 4 {
+	if rel, ok := relations[relationKey]; ok && rel.Format == anytypedomain.RelationFormatDate {
 		return true
 	}
 	format := strings.ToLower(strings.TrimSpace(asString(anyMapGet(raw, "format", "Format"))))
@@ -2976,141 +2797,15 @@ func max(a, b int) int {
 }
 
 func copyDir(src, dst string) (int, error) {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("read dir %s: %w", src, err)
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return 0, err
-	}
-
-	copied := 0
-	for _, ent := range entries {
-		if ent.IsDir() {
-			continue
-		}
-		inPath := filepath.Join(src, ent.Name())
-		outPath := filepath.Join(dst, ent.Name())
-		if err := copyFile(inPath, outPath); err != nil {
-			return copied, err
-		}
-		copied++
-	}
-	return copied, nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Sync()
+	return exportfs.CopyDir(src, dst)
 }
 
 func normalizeExportedFileObjectPaths(inputDir, outputDir string, fileObjects map[string]string) error {
-	rewrittenPaths := map[string]string{}
-	for _, sourceRelPath := range fileObjects {
-		sourceRelPath = filepath.ToSlash(strings.TrimSpace(sourceRelPath))
-		if sourceRelPath == "" || filepath.Ext(sourceRelPath) != "" {
-			continue
-		}
-		if _, seen := rewrittenPaths[sourceRelPath]; seen {
-			continue
-		}
-
-		ext := detectFileExtensionFromContent(filepath.Join(inputDir, filepath.FromSlash(sourceRelPath)))
-		if ext == "" {
-			continue
-		}
-		rewrittenPaths[sourceRelPath] = sourceRelPath + ext
-	}
-
-	for sourceRelPath, rewrittenRelPath := range rewrittenPaths {
-		sourceAbsPath := filepath.Join(outputDir, filepath.FromSlash(sourceRelPath))
-		rewrittenAbsPath := filepath.Join(outputDir, filepath.FromSlash(rewrittenRelPath))
-
-		if _, err := os.Stat(sourceAbsPath); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("stat copied file %s: %w", sourceRelPath, err)
-		}
-		if _, err := os.Stat(rewrittenAbsPath); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("stat rewritten file %s: %w", rewrittenRelPath, err)
-		}
-
-		if err := os.Rename(sourceAbsPath, rewrittenAbsPath); err != nil {
-			return fmt.Errorf("rename copied file %s -> %s: %w", sourceRelPath, rewrittenRelPath, err)
-		}
-	}
-
-	for objectID, relPath := range fileObjects {
-		relPath = filepath.ToSlash(strings.TrimSpace(relPath))
-		if rewrittenRelPath, ok := rewrittenPaths[relPath]; ok {
-			fileObjects[objectID] = rewrittenRelPath
-		}
-	}
-
-	return nil
+	return exportfs.NormalizeExportedFileObjectPaths(inputDir, outputDir, fileObjects)
 }
 
 func detectFileExtensionFromContent(path string) string {
-	content, err := os.ReadFile(path)
-	if err != nil || len(content) == 0 {
-		return ""
-	}
-
-	sniffLen := len(content)
-	if sniffLen > 512 {
-		sniffLen = 512
-	}
-
-	mimeType := strings.TrimSpace(http.DetectContentType(content[:sniffLen]))
-	if idx := strings.Index(mimeType, ";"); idx >= 0 {
-		mimeType = strings.TrimSpace(mimeType[:idx])
-	}
-	mimeType = strings.ToLower(mimeType)
-	if mimeType == "" || mimeType == "application/octet-stream" {
-		return ""
-	}
-
-	preferredExt := map[string]string{
-		"image/jpeg":       ".jpg",
-		"image/png":        ".png",
-		"image/gif":        ".gif",
-		"image/webp":       ".webp",
-		"image/svg+xml":    ".svg",
-		"image/x-icon":     ".ico",
-		"application/pdf":  ".pdf",
-		"application/json": ".json",
-		"text/plain":       ".txt",
-	}
-	if ext, ok := preferredExt[mimeType]; ok {
-		return ext
-	}
-
-	exts, err := mime.ExtensionsByType(mimeType)
-	if err != nil || len(exts) == 0 {
-		return ""
-	}
-	sort.Strings(exts)
-	return exts[0]
+	return exportfs.DetectFileExtensionFromContent(path)
 }
 
 const iconizeAnytypePackName = "anytype"
