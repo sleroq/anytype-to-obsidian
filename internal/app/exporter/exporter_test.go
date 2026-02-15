@@ -2509,7 +2509,7 @@ func TestRenderBaseFileAddsSetOfTypeFilter(t *testing.T) {
 	}
 }
 
-func TestExporterRendersKanbanPluginViewByDefault(t *testing.T) {
+func TestExporterRendersBoardViewAsTableByDefault(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
 	output := filepath.Join(root, "vault")
@@ -2542,11 +2542,49 @@ func TestExporterRendersKanbanPluginViewByDefault(t *testing.T) {
 	}
 	base := string(baseBytes)
 
-	if !strings.Contains(base, "views:\n  - type: kanban\n") {
-		t.Fatalf("expected board view to render as plugin kanban view, got:\n%s", base)
+	if !strings.Contains(base, "views:\n  - type: table\n") {
+		t.Fatalf("expected board view to render as table view by default, got:\n%s", base)
 	}
 	if !strings.Contains(base, "name: All") || !strings.Contains(base, "limit: 10") {
-		t.Fatalf("expected plugin kanban view metadata to be preserved, got:\n%s", base)
+		t.Fatalf("expected table view metadata to be preserved, got:\n%s", base)
+	}
+}
+
+func TestExporterRendersKanbanPluginViewWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "query.pb.json"), "Page", map[string]any{
+		"id":   "query",
+		"name": "Board Query",
+	}, []map[string]any{
+		{"id": "query", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Board Query", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Board", "name": "All", "pageLimit": 10}},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, EnableBasesKanban: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	baseBytes, err := os.ReadFile(filepath.Join(output, "bases", "Board Query.base"))
+	if err != nil {
+		t.Fatalf("read base file: %v", err)
+	}
+	base := string(baseBytes)
+
+	if !strings.Contains(base, "views:\n  - type: kanban\n") {
+		t.Fatalf("expected board view to render as plugin kanban view when enabled, got:\n%s", base)
 	}
 }
 

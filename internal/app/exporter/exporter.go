@@ -21,7 +21,7 @@ type Exporter struct {
 	DisableIconizeIcons       bool
 	DisablePrettyPropertyIcon bool
 	DisablePictureToCover     bool
-	DisableBasesKanban        bool
+	EnableBasesKanban         bool
 	DisableCollectionFilters  bool
 	RunPrettier               bool
 	FilenameEscaping          string
@@ -528,7 +528,7 @@ func (e Exporter) Run() (Stats, error) {
 			objectNamesByID,
 			fileObjects,
 			!e.DisablePictureToCover,
-			!e.DisableBasesKanban,
+			e.EnableBasesKanban,
 		)
 		if !ok {
 			progressBar.Advance("exporting bases")

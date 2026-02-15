@@ -24,7 +24,7 @@ type cliOptions struct {
 	DisableIconizeIcons       bool
 	DisablePrettyPropertyIcon bool
 	DisablePictureToCover     bool
-	DisableBasesKanban        bool
+	EnableBasesKanban         bool
 	FilenameEscaping          string
 	RunPrettier               bool
 	IncludeDynamicProperties  bool
@@ -66,7 +66,7 @@ func main() {
 		flag.BoolVar(&opts.DisableIconizeIcons, "disable-iconize-icons", opts.DisableIconizeIcons, "Disable exporting icons to .obsidian/plugins/obsidian-icon-folder/data.json")
 		flag.BoolVar(&opts.DisablePrettyPropertyIcon, "disable-pretty-properties-icon", opts.DisablePrettyPropertyIcon, "Disable converting iconImage/iconEmoji to the Pretty Properties icon frontmatter")
 		flag.BoolVar(&opts.DisablePictureToCover, "disable-picture-to-cover", opts.DisablePictureToCover, "Disable renaming Anytype picture property to cover")
-		flag.BoolVar(&opts.DisableBasesKanban, "disable-bases-kanban", opts.DisableBasesKanban, "Disable bases-kanban integration and export board views as regular table views")
+		flag.BoolVar(&opts.EnableBasesKanban, "enable-bases-kanban", opts.EnableBasesKanban, "Enable bases-kanban integration and export board views as kanban views")
 		flag.BoolVar(&opts.RunPrettier, "prettier", opts.RunPrettier, "Try to run npx prettier on exported files (set to false to disable)")
 		flag.StringVar(&opts.FilenameEscaping, "filename-escaping", opts.FilenameEscaping, "Filename escaping mode: auto, posix, windows")
 		flag.BoolVar(&opts.IncludeDynamicProperties, "include-dynamic-properties", opts.IncludeDynamicProperties, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
@@ -85,7 +85,7 @@ func main() {
 		DisableIconizeIcons:       opts.DisableIconizeIcons,
 		DisablePrettyPropertyIcon: opts.DisablePrettyPropertyIcon,
 		DisablePictureToCover:     opts.DisablePictureToCover,
-		DisableBasesKanban:        opts.DisableBasesKanban,
+		EnableBasesKanban:         opts.EnableBasesKanban,
 		RunPrettier:               opts.RunPrettier,
 		FilenameEscaping:          opts.FilenameEscaping,
 		IncludeDynamicProperties:  opts.IncludeDynamicProperties,
@@ -113,7 +113,7 @@ func defaultCLIOptions() cliOptions {
 		DisableIconizeIcons:       false,
 		DisablePrettyPropertyIcon: false,
 		DisablePictureToCover:     false,
-		DisableBasesKanban:        false,
+		EnableBasesKanban:         false,
 		FilenameEscaping:          "auto",
 		RunPrettier:               true,
 		IncludeDynamicProperties:  false,
@@ -149,7 +149,7 @@ func newCLIModel(defaults cliOptions) *cliModel {
 		{key: "disableIconizeIcons", label: "Disable Iconize export", description: "Skip writing Iconize plugin data and generated Anytype icon pack files.", value: fmt.Sprintf("%t", defaults.DisableIconizeIcons)},
 		{key: "disablePrettyPropertyIcon", label: "Disable Pretty Properties icon conversion", description: "Keep Anytype iconImage/iconEmoji properties instead of exporting a single icon property.", value: fmt.Sprintf("%t", defaults.DisablePrettyPropertyIcon)},
 		{key: "disablePictureToCover", label: "Disable picture->cover rename", description: "Keep Anytype picture property name instead of renaming to cover.", value: fmt.Sprintf("%t", defaults.DisablePictureToCover)},
-		{key: "disableBasesKanban", label: "Disable bases-kanban integration", description: "Export Anytype board/kanban views as regular table views instead of plugin kanban views.", value: fmt.Sprintf("%t", defaults.DisableBasesKanban)},
+		{key: "enableBasesKanban", label: "Enable bases-kanban integration", description: "Export Anytype board/kanban views as plugin kanban views instead of regular table views.", value: fmt.Sprintf("%t", defaults.EnableBasesKanban)},
 		{key: "prettier", label: "Run Prettier", description: "Format exported markdown with npx prettier when available.", value: fmt.Sprintf("%t", defaults.RunPrettier)},
 		{key: "filenameEscaping", label: "Filename escaping mode", description: "How to sanitize filenames: auto, posix, or windows.", value: defaults.FilenameEscaping},
 		{key: "includeDynamicProperties", label: "Include dynamic properties", description: "Include system-managed fields like backlinks and timestamps.", value: fmt.Sprintf("%t", defaults.IncludeDynamicProperties)},
@@ -314,12 +314,12 @@ func (m *cliModel) resolveOptions() (cliOptions, error) {
 			opts.DisablePictureToCover = parsed
 		case "filenameEscaping":
 			opts.FilenameEscaping = value
-		case "disableBasesKanban":
+		case "enableBasesKanban":
 			parsed, err := parseInteractiveBool(value)
 			if err != nil {
-				return opts, fmt.Errorf("field disable-bases-kanban: %w", err)
+				return opts, fmt.Errorf("field enable-bases-kanban: %w", err)
 			}
-			opts.DisableBasesKanban = parsed
+			opts.EnableBasesKanban = parsed
 		case "includeDynamicProperties":
 			parsed, err := parseInteractiveBool(value)
 			if err != nil {
