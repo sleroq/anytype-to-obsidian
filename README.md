@@ -40,7 +40,7 @@ Or run directly with flags:
 Run using Nix:
 
 ```bash
-nix run github.com/sleroq/anytype-to-obsidian -- -input ./Anytype-exported-json -output ./result-directory
+nix run github:sleroq/anytype-to-obsidian -- -input ./Anytype-exported-json -output ./result-directory
 ```
 
 ## Main options
