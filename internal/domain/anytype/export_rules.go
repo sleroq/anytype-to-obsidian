@@ -7,10 +7,12 @@ import (
 )
 
 const (
+	// Anytype relationFormat enum IDs. Verify against Anytype Heart:
+	// anytype-heart/pkg/lib/pb/model/models.pb.go (RelationFormat_* constants).
 	RelationFormatDate      = 4
 	RelationFormatFile      = 5
-	RelationFormatStatus    = 11
-	RelationFormatTag       = 3
+	RelationFormatStatus    = 3
+	RelationFormatTag       = 11
 	RelationFormatObjectRef = 100
 )
 

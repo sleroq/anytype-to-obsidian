@@ -2204,7 +2204,7 @@ func TestExporterWritesPrettyPropertiesColorsFromAnytypeRelationOptions(t *testi
 		"id":               "rel-tag",
 		"name":             "Tag",
 		"relationKey":      "tag",
-		"relationFormat":   3,
+		"relationFormat":   11,
 		"relationMaxCount": 0,
 	}, nil)
 	writePBJSON(t, filepath.Join(input, "relations", "rel-status.pb.json"), "STRelation", map[string]any{
@@ -2218,7 +2218,7 @@ func TestExporterWritesPrettyPropertiesColorsFromAnytypeRelationOptions(t *testi
 		"id":               "rel-topic",
 		"name":             "Topic",
 		"relationKey":      "topic",
-		"relationFormat":   3,
+		"relationFormat":   11,
 		"relationMaxCount": 0,
 	}, nil)
 
@@ -2296,7 +2296,7 @@ func TestExporterMergesPrettyPropertiesColorsWithoutOverwritingUserChoices(t *te
 		"id":               "rel-tag",
 		"name":             "Tag",
 		"relationKey":      "tag",
-		"relationFormat":   3,
+		"relationFormat":   11,
 		"relationMaxCount": 0,
 	}, nil)
 
