@@ -6,7 +6,8 @@ Convert Anytype JSON Export into Obsidian Markdown with relations and metadata p
 
 - Relations are exported correctly (object links, tags, statuses, files, types, multi-selects).
 - All of Anytype blocks are supported.
-- Anytype queries/dataviews are converted into Obsidian Bases (`.base`) files.
+- Anytype queries/collections are converted into Obsidian Bases (`.base`) files.
+- Collection Bases are scoped by `createdInContext` membership when available.
 - Integration with Pretty Properties and Iconize obsidian plugins. Compatible properties are converted and renamed.
 - Select-like values (for example `tag`, `status`, `type`) can be exported as linked objects/notes when needed.
 - Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
@@ -43,7 +44,8 @@ go run ./cmd/anytype-to-obsidian -input ./Anytype-exported-json -output ./result
 - `-prettier`: format exported markdown via `npx prettier` (`true` by default).
 - `-filename-escaping`: `auto`, `posix`, or `windows`.
 - `-include-dynamic-properties`: include system-managed Anytype fields.
-- `-include-archived-properties`: include unresolved/archived relation fields and include archived/relation-option dataview objects in `bases/*.base` export.
+- `-include-archived-objects`: include archived Anytype objects in export (notes and bases).
+- `-include-archived-properties`: include unresolved/archived relation fields and include relation-option dataview objects in `bases/*.base` export.
 - `-exclude-empty-properties`: drop empty frontmatter values.
 - `-exclude-properties`: comma-separated property keys/names to exclude.
 - `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.

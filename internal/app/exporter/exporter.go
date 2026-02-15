@@ -21,16 +21,17 @@ type Exporter struct {
 	DisableIconizeIcons       bool
 	DisablePrettyPropertyIcon bool
 	DisablePictureToCover     bool
+	DisableCollectionFilters  bool
 	RunPrettier               bool
 	FilenameEscaping          string
 	IncludeDynamicProperties  bool
+	IncludeArchivedObjects    bool
 	IncludeArchivedProperties bool
 	ExcludeEmptyProperties    bool
 	ExcludePropertyKeys       []string
 	ForceIncludePropertyKeys  []string
 	LinkAsNotePropertyKeys    []string
 }
-
 type Stats struct {
 	Notes int
 	Files int
@@ -398,12 +399,13 @@ func buildObjectNameIndexes(allObjects []objectInfo, typesByID map[string]typeDe
 	return idToObject, objectNamesByID, optionNamesByID
 }
 
-func shouldExportBaseObject(obj objectInfo, includeArchived bool) bool {
-	if includeArchived {
+func isArchivedObject(obj objectInfo) bool {
+	return asBool(anyMapGet(obj.Details, "isArchived", "is_archived", "archived"))
+}
+
+func shouldExportBaseObject(obj objectInfo, includeRelationOptionDataviews bool) bool {
+	if includeRelationOptionDataviews {
 		return true
-	}
-	if asBool(anyMapGet(obj.Details, "isArchived", "is_archived", "archived")) {
-		return false
 	}
 	objectTypes := obj.ObjectTypes
 	if len(objectTypes) == 0 {
@@ -415,6 +417,37 @@ func shouldExportBaseObject(obj objectInfo, includeArchived bool) bool {
 		}
 	}
 	return true
+}
+
+func objectTypeKeys(obj objectInfo) []string {
+	objectTypes := obj.ObjectTypes
+	if len(objectTypes) == 0 {
+		objectTypes = anyToStringSlice(obj.Details["objectTypes"])
+	}
+	return objectTypes
+}
+
+func isCollectionObject(obj objectInfo) bool {
+	for _, objectType := range objectTypeKeys(obj) {
+		if strings.TrimSpace(objectType) == "ot-collection" {
+			return true
+		}
+	}
+	return false
+}
+
+func filterExportableObjects(objects []objectInfo, includeArchivedObjects bool) []objectInfo {
+	if includeArchivedObjects {
+		return objects
+	}
+	filtered := make([]objectInfo, 0, len(objects))
+	for _, obj := range objects {
+		if isArchivedObject(obj) {
+			continue
+		}
+		filtered = append(filtered, obj)
+	}
+	return filtered
 }
 
 func (e Exporter) Run() (Stats, error) {
@@ -458,6 +491,8 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, err
 	}
 
+	objects = filterExportableObjects(objects, e.IncludeArchivedObjects)
+
 	filters := newPropertyFilters(e.ExcludePropertyKeys, e.ForceIncludePropertyKeys, e.LinkAsNotePropertyKeys, e.ExcludeEmptyProperties)
 	syntheticObjects := buildSyntheticLinkObjects(objects, relations, optionsByID, typesByID, filters)
 
@@ -484,7 +519,15 @@ func (e Exporter) Run() (Stats, error) {
 			progressBar.Advance("exporting bases")
 			continue
 		}
-		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects, !e.DisablePictureToCover)
+		baseContent, ok := renderBaseFile(
+			obj,
+			relations,
+			optionNamesByID,
+			notePathByID,
+			objectNamesByID,
+			fileObjects,
+			!e.DisablePictureToCover,
+		)
 		if !ok {
 			progressBar.Advance("exporting bases")
 			continue

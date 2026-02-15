@@ -1293,7 +1293,7 @@ func TestExporterIncludesRelationOptionDataviewBasesWhenIncludeArchivedEnabled(t
 	}
 }
 
-func TestExporterSkipsArchivedDataviewBasesByDefault(t *testing.T) {
+func TestExporterSkipsArchivedObjectsByDefault(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
 	output := filepath.Join(root, "vault")
@@ -1324,8 +1324,142 @@ func TestExporterSkipsArchivedDataviewBasesByDefault(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(output, "bases", "Archived Query.base")); !os.IsNotExist(err) {
 		t.Fatalf("expected archived dataview to not export base by default")
 	}
-	if _, err := os.Stat(filepath.Join(output, "notes", "Archived Query.md")); err != nil {
-		t.Fatalf("expected archived dataview object to remain a note when base is skipped: %v", err)
+	if _, err := os.Stat(filepath.Join(output, "notes", "Archived Query.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected archived object note to be skipped by default")
+	}
+}
+
+func TestExporterIncludesArchivedDataviewBasesWhenIncludeArchivedObjectsEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "archived-query.pb.json"), "Page", map[string]any{
+		"id":         "query-archived-1",
+		"name":       "Archived Query",
+		"isArchived": true,
+	}, []map[string]any{
+		{"id": "query-archived-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Archived Query", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, IncludeArchivedObjects: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "Archived Query.base")); err != nil {
+		t.Fatalf("expected archived dataview base when include-archived-objects is enabled: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Archived Query.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected archived dataview note to be skipped when base is exported")
+	}
+}
+
+func TestExporterIncludesArchivedNotesWhenIncludeArchivedObjectsEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	outputDefault := filepath.Join(root, "vault-default")
+	outputIncluded := filepath.Join(root, "vault-included")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "archived-note.pb.json"), "Page", map[string]any{
+		"id":         "archived-note-1",
+		"name":       "Archived Note",
+		"isArchived": true,
+	}, []map[string]any{
+		{"id": "archived-note-1", "childrenIds": []string{"title", "p-1"}},
+		{"id": "title", "text": map[string]any{"text": "Archived Note", "style": "Title"}},
+		{"id": "p-1", "text": map[string]any{"text": "Body", "style": "Paragraph"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: outputDefault}).Run()
+	if err != nil {
+		t.Fatalf("run exporter default: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputDefault, "notes", "Archived Note.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected archived note to be skipped by default")
+	}
+
+	_, err = (Exporter{InputDir: input, OutputDir: outputIncluded, IncludeArchivedObjects: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter include archived objects: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outputIncluded, "notes", "Archived Note.md")); err != nil {
+		t.Fatalf("expected archived note when include-archived-objects is enabled: %v", err)
+	}
+}
+
+func TestExporterUsesCreatedInContextForCollectionBaseFilter(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSONWithData(t, filepath.Join(input, "objects", "collection.pb.json"), "Page", map[string]any{
+		"id":   "collection-1",
+		"name": "My Collection",
+	}, []map[string]any{
+		{"id": "collection-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "My Collection", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"isCollection": true,
+			"views":        []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	}, map[string]any{
+		"objectTypes": []any{"ot-collection"},
+		"collections": map[string]any{"objects": []any{"member-1"}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "member.pb.json"), "Page", map[string]any{
+		"id":               "member-1",
+		"name":             "Member Task",
+		"createdInContext": "collection-1",
+	}, []map[string]any{
+		{"id": "member-1", "childrenIds": []string{"title"}},
+		{"id": "title", "text": map[string]any{"text": "Member Task", "style": "Title"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	baseBytes, err := os.ReadFile(filepath.Join(output, "bases", "My Collection.base"))
+	if err != nil {
+		t.Fatalf("read collection base: %v", err)
+	}
+	base := string(baseBytes)
+	if !strings.Contains(base, "note.createdInContext") || !strings.Contains(base, "\\\"collection-1\\\"") {
+		t.Fatalf("expected collection base filter to scope by createdInContext property, got:\n%s", base)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Member Task.md"))
+	if err != nil {
+		t.Fatalf("read member note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "createdInContext: \"collection-1\"") {
+		t.Fatalf("expected createdInContext property in member note, got:\n%s", note)
 	}
 }
 

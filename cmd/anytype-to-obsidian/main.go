@@ -27,6 +27,7 @@ type cliOptions struct {
 	FilenameEscaping          string
 	RunPrettier               bool
 	IncludeDynamicProperties  bool
+	IncludeArchivedObjects    bool
 	IncludeArchivedProperties bool
 	ExcludeEmptyProperties    bool
 	ExcludeProperties         string
@@ -67,7 +68,8 @@ func main() {
 		flag.BoolVar(&opts.RunPrettier, "prettier", opts.RunPrettier, "Try to run npx prettier on exported files (set to false to disable)")
 		flag.StringVar(&opts.FilenameEscaping, "filename-escaping", opts.FilenameEscaping, "Filename escaping mode: auto, posix, windows")
 		flag.BoolVar(&opts.IncludeDynamicProperties, "include-dynamic-properties", opts.IncludeDynamicProperties, "Include dynamic/system-managed Anytype properties (e.g. backlinks, lastModifiedDate)")
-		flag.BoolVar(&opts.IncludeArchivedProperties, "include-archived-properties", opts.IncludeArchivedProperties, "Include archived/unresolved relation properties and archived/relation-option dataview bases")
+		flag.BoolVar(&opts.IncludeArchivedObjects, "include-archived-objects", opts.IncludeArchivedObjects, "Include archived objects in export (notes and bases)")
+		flag.BoolVar(&opts.IncludeArchivedProperties, "include-archived-properties", opts.IncludeArchivedProperties, "Include archived/unresolved relation properties and relation-option dataview bases")
 		flag.BoolVar(&opts.ExcludeEmptyProperties, "exclude-empty-properties", opts.ExcludeEmptyProperties, "Exclude frontmatter properties with empty values (nil, empty strings, empty arrays, empty objects)")
 		flag.StringVar(&opts.ExcludeProperties, "exclude-properties", opts.ExcludeProperties, "Comma-separated property keys/names to always exclude from frontmatter")
 		flag.StringVar(&opts.IncludeProperties, "force-include-properties", opts.IncludeProperties, "Comma-separated property keys/names to always include in frontmatter")
@@ -84,6 +86,7 @@ func main() {
 		RunPrettier:               opts.RunPrettier,
 		FilenameEscaping:          opts.FilenameEscaping,
 		IncludeDynamicProperties:  opts.IncludeDynamicProperties,
+		IncludeArchivedObjects:    opts.IncludeArchivedObjects,
 		IncludeArchivedProperties: opts.IncludeArchivedProperties,
 		ExcludeEmptyProperties:    opts.ExcludeEmptyProperties,
 		ExcludePropertyKeys:       parseCommaSeparatedList(opts.ExcludeProperties),
@@ -110,6 +113,7 @@ func defaultCLIOptions() cliOptions {
 		FilenameEscaping:          "auto",
 		RunPrettier:               true,
 		IncludeDynamicProperties:  false,
+		IncludeArchivedObjects:    false,
 		IncludeArchivedProperties: false,
 		ExcludeEmptyProperties:    false,
 		ExcludeProperties:         "",
@@ -144,7 +148,8 @@ func newCLIModel(defaults cliOptions) *cliModel {
 		{key: "prettier", label: "Run Prettier", description: "Format exported markdown with npx prettier when available.", value: fmt.Sprintf("%t", defaults.RunPrettier)},
 		{key: "filenameEscaping", label: "Filename escaping mode", description: "How to sanitize filenames: auto, posix, or windows.", value: defaults.FilenameEscaping},
 		{key: "includeDynamicProperties", label: "Include dynamic properties", description: "Include system-managed fields like backlinks and timestamps.", value: fmt.Sprintf("%t", defaults.IncludeDynamicProperties)},
-		{key: "includeArchivedProperties", label: "Include archived properties", description: "Include unresolved relation fields and archived/relation-option dataview bases.", value: fmt.Sprintf("%t", defaults.IncludeArchivedProperties)},
+		{key: "includeArchivedObjects", label: "Include archived objects", description: "Include archived objects in export (notes and bases).", value: fmt.Sprintf("%t", defaults.IncludeArchivedObjects)},
+		{key: "includeArchivedProperties", label: "Include archived properties", description: "Include unresolved relation fields and relation-option dataview bases.", value: fmt.Sprintf("%t", defaults.IncludeArchivedProperties)},
 		{key: "excludeEmptyProperties", label: "Exclude empty properties", description: "Skip empty frontmatter values (empty strings, lists, objects).", value: fmt.Sprintf("%t", defaults.ExcludeEmptyProperties)},
 		{key: "excludeProperties", label: "Always exclude properties", description: "Comma-separated property keys or names to exclude.", value: defaults.ExcludeProperties},
 		{key: "includeProperties", label: "Always include properties", description: "Comma-separated property keys or names to force include.", value: defaults.IncludeProperties},
@@ -310,6 +315,12 @@ func (m *cliModel) resolveOptions() (cliOptions, error) {
 				return opts, fmt.Errorf("field include-dynamic-properties: %w", err)
 			}
 			opts.IncludeDynamicProperties = parsed
+		case "includeArchivedObjects":
+			parsed, err := parseInteractiveBool(value)
+			if err != nil {
+				return opts, fmt.Errorf("field include-archived-objects: %w", err)
+			}
+			opts.IncludeArchivedObjects = parsed
 		case "includeArchivedProperties":
 			parsed, err := parseInteractiveBool(value)
 			if err != nil {

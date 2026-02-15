@@ -61,6 +61,15 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 		return "", false
 	}
 
+	if isCollectionObject(obj) {
+		for i := range views {
+			views[i].Filters = andBaseFilters(
+				views[i].Filters,
+				&baseFilterNode{Expr: buildCollectionCreatedInContextFilter(obj.ID)},
+			)
+		}
+	}
+
 	var buf bytes.Buffer
 	buf.WriteString("views:\n")
 	for _, v := range views {
@@ -137,6 +146,22 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 	}
 
 	return buf.String(), true
+}
+
+func buildCollectionCreatedInContextFilter(collectionID string) string {
+	quoted := renderFilterLiteral(collectionID)
+	contains := buildContainsAnyExpression("note.createdInContext", []string{quoted})
+	return "(note.createdInContext == " + quoted + " || " + contains + ")"
+}
+
+func andBaseFilters(left *baseFilterNode, right *baseFilterNode) *baseFilterNode {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	return &baseFilterNode{Op: "and", Items: []baseFilterNode{*left, *right}}
 }
 
 func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) []baseViewSpec {
