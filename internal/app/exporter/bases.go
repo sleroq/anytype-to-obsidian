@@ -50,6 +50,10 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 		if len(b.Dataview) == 0 {
 			continue
 		}
+		targetID := strings.TrimSpace(asString(anyMapGet(b.Dataview, "TargetObjectId", "targetObjectId")))
+		if targetID != "" && targetID != obj.ID {
+			continue
+		}
 		parsed := parseDataviewViews(b.Dataview, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover)
 		views = append(views, parsed...)
 	}

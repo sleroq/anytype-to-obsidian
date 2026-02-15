@@ -43,7 +43,7 @@ go run ./cmd/anytype-to-obsidian -input ./Anytype-exported-json -output ./result
 - `-prettier`: format exported markdown via `npx prettier` (`true` by default).
 - `-filename-escaping`: `auto`, `posix`, or `windows`.
 - `-include-dynamic-properties`: include system-managed Anytype fields.
-- `-include-archived-properties`: include unresolved/archived relation fields.
+- `-include-archived-properties`: include unresolved/archived relation fields and include archived/relation-option dataview objects in `bases/*.base` export.
 - `-exclude-empty-properties`: drop empty frontmatter values.
 - `-exclude-properties`: comma-separated property keys/names to exclude.
 - `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.

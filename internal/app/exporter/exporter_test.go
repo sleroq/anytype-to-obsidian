@@ -1108,13 +1108,182 @@ func TestExporterLinksQueriesToBaseFiles(t *testing.T) {
 		t.Fatalf("expected query mention/link to target base file, got:\n%s", sourceNote)
 	}
 
-	queryNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "General Journal.md"))
-	if err != nil {
-		t.Fatalf("read query note: %v", err)
+	if _, err := os.Stat(filepath.Join(output, "notes", "General Journal.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected query note to be skipped when base is exported")
 	}
-	queryNote := string(queryNoteBytes)
-	if !strings.Contains(queryNote, "![[bases/General Journal.base]]") {
-		t.Fatalf("expected dataview block to embed base file, got:\n%s", queryNote)
+
+	indexBytes, err := os.ReadFile(filepath.Join(output, "_anytype", "index.json"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	var idx indexFile
+	if err := json.Unmarshal(indexBytes, &idx); err != nil {
+		t.Fatalf("decode index: %v", err)
+	}
+	if got := idx.Notes["query-1"]; got != "bases/General Journal.base" {
+		t.Fatalf("expected query id to map to base path in index, got %q", got)
+	}
+}
+
+func TestExporterReusesTargetQueryBaseForInlineDataview(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "query.pb.json"), "Page", map[string]any{
+		"id":   "query-1",
+		"name": "General Journal",
+	}, []map[string]any{
+		{"id": "query-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "General Journal", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "List", "name": "All"}},
+		}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "source.pb.json"), "Page", map[string]any{
+		"id":   "source-1",
+		"name": "Everything note",
+	}, []map[string]any{
+		{"id": "source-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Everything note", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"TargetObjectId": "query-1",
+			"views":          []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "General Journal.base")); err != nil {
+		t.Fatalf("expected query base file to be exported: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "bases", "Everything note.base")); !os.IsNotExist(err) {
+		t.Fatalf("expected inline dataview note to not create a separate base file")
+	}
+
+	sourceNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Everything note.md"))
+	if err != nil {
+		t.Fatalf("read source note: %v", err)
+	}
+	sourceNote := string(sourceNoteBytes)
+	if !strings.Contains(sourceNote, "![[bases/General Journal.base]]") {
+		t.Fatalf("expected inline dataview to embed existing query base file, got:\n%s", sourceNote)
+	}
+}
+
+func TestExporterSkipsRelationOptionDataviewBasesByDefault(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSONWithData(t, filepath.Join(input, "objects", "relation-option.pb.json"), "Page", map[string]any{
+		"id":   "relation-option-1",
+		"name": "Done",
+	}, []map[string]any{
+		{"id": "relation-option-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Done", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	}, map[string]any{"objectTypes": []any{"ot-relationOption"}})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "Done.base")); !os.IsNotExist(err) {
+		t.Fatalf("expected relation-option dataview to not export base by default")
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Done.md")); err != nil {
+		t.Fatalf("expected relation-option object to remain a note when base is skipped: %v", err)
+	}
+}
+
+func TestExporterIncludesRelationOptionDataviewBasesWhenIncludeArchivedEnabled(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSONWithData(t, filepath.Join(input, "objects", "relation-option.pb.json"), "Page", map[string]any{
+		"id":   "relation-option-1",
+		"name": "Done",
+	}, []map[string]any{
+		{"id": "relation-option-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Done", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	}, map[string]any{"objectTypes": []any{"ot-relationOption"}})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, IncludeArchivedProperties: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "Done.base")); err != nil {
+		t.Fatalf("expected relation-option dataview to export base when include-archived-properties is enabled: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Done.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected relation-option note to be skipped when base is exported")
+	}
+}
+
+func TestExporterSkipsArchivedDataviewBasesByDefault(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "archived-query.pb.json"), "Page", map[string]any{
+		"id":         "query-archived-1",
+		"name":       "Archived Query",
+		"isArchived": true,
+	}, []map[string]any{
+		{"id": "query-archived-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "Archived Query", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "Table", "name": "All"}},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(output, "bases", "Archived Query.base")); !os.IsNotExist(err) {
+		t.Fatalf("expected archived dataview to not export base by default")
+	}
+	if _, err := os.Stat(filepath.Join(output, "notes", "Archived Query.md")); err != nil {
+		t.Fatalf("expected archived dataview object to remain a note when base is skipped: %v", err)
 	}
 }
 
@@ -2225,6 +2394,76 @@ func TestExporterRunsPrettierWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestExporterRestoresCalloutSpacingAfterPrettier(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "quote-callout-row.pb.json"), "Page", map[string]any{
+		"id":   "quote-callout-row",
+		"name": "Quote Callout Row",
+	}, []map[string]any{
+		{"id": "quote-callout-row", "childrenIds": []string{"title", "quote", "callout", "row"}},
+		{"id": "title", "text": map[string]any{"text": "Quote Callout Row", "style": "Title"}},
+		{"id": "quote", "text": map[string]any{"text": "highlighted", "style": "Quote"}},
+		{"id": "callout", "text": map[string]any{"text": "callout!", "style": "Callout"}},
+		{"id": "row", "layout": map[string]any{"style": "Row"}, "childrenIds": []string{"left-col", "right-col"}},
+		{"id": "left-col", "layout": map[string]any{"style": "Column"}, "childrenIds": []string{"left-text"}},
+		{"id": "left-text", "text": map[string]any{"text": "two blocks", "style": "Paragraph"}},
+		{"id": "right-col", "layout": map[string]any{"style": "Column"}, "childrenIds": []string{"right-text"}},
+		{"id": "right-text", "text": map[string]any{"text": "together", "style": "Paragraph"}},
+	})
+
+	originalRunner := prettierCommandRunner
+	t.Cleanup(func() {
+		prettierCommandRunner = originalRunner
+	})
+
+	prettierCommandRunner = func(outputDir string) error {
+		notePath := filepath.Join(outputDir, "notes", "Quote Callout Row.md")
+		data, err := os.ReadFile(notePath)
+		if err != nil {
+			return err
+		}
+		collapsed := strings.ReplaceAll(string(data), "> highlighted\n\n> [!note] callout!", "> highlighted\n> [!note] callout!")
+		return os.WriteFile(notePath, []byte(collapsed), 0o644)
+	}
+
+	_, err := (Exporter{InputDir: input, OutputDir: output, RunPrettier: true}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Quote Callout Row.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+
+	expected := "> highlighted\n\n> [!note] callout!\n\ntwo blocks\ntogether"
+	if !strings.Contains(note, expected) {
+		t.Fatalf("expected quote/callout separation to be restored after prettier, got:\n%s", note)
+	}
+}
+
+func TestEnsureCalloutBlockSeparation(t *testing.T) {
+	in := "## Heading\n\n> highlighted\n> [!note] callout!\n\ntext"
+	out, changed := ensureCalloutBlockSeparation(in)
+	if !changed {
+		t.Fatalf("expected callout separation to be detected")
+	}
+	expected := "## Heading\n\n> highlighted\n\n> [!note] callout!\n\ntext"
+	if out != expected {
+		t.Fatalf("unexpected normalization result:\n%s", out)
+	}
+}
+
 func TestExporterIgnoresPrettierFailure(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")
@@ -2616,17 +2855,25 @@ func prepareMinimalExportFixture(t *testing.T, input string) {
 }
 
 func writePBJSON(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any) {
+	writePBJSONWithData(t, path, sbType, details, blocks, nil)
+}
+
+func writePBJSONWithData(t *testing.T, path string, sbType string, details map[string]any, blocks []map[string]any, dataExtras map[string]any) {
 	t.Helper()
 	if blocks == nil {
 		blocks = []map[string]any{}
 	}
+	data := map[string]any{
+		"blocks":  blocks,
+		"details": details,
+	}
+	for key, value := range dataExtras {
+		data[key] = value
+	}
 	payload := map[string]any{
 		"sbType": sbType,
 		"snapshot": map[string]any{
-			"data": map[string]any{
-				"blocks":  blocks,
-				"details": details,
-			},
+			"data": data,
 		},
 	}
 	b, err := json.Marshal(payload)

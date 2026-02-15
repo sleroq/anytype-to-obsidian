@@ -176,7 +176,11 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 			buf.WriteString("$$\n" + b.Latex.Text + "\n$$\n")
 		}
 	} else if len(b.Dataview) > 0 {
-		if note, ok := notes[rootID]; ok && strings.HasPrefix(filepath.ToSlash(strings.TrimSpace(note)), "bases/") {
+		dataviewTargetID := rootID
+		if target := strings.TrimSpace(asString(anyMapGet(b.Dataview, "TargetObjectId", "targetObjectId"))); target != "" {
+			dataviewTargetID = target
+		}
+		if note, ok := notes[dataviewTargetID]; ok && strings.HasPrefix(filepath.ToSlash(strings.TrimSpace(note)), "bases/") {
 			buf.WriteString("![[" + relativeWikiTarget(sourceNotePath, note) + "]]\n")
 		}
 	} else if b.Link != nil {

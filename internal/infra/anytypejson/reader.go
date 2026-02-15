@@ -67,11 +67,12 @@ func readObjects(dir string) ([]anytypedomain.ObjectInfo, error) {
 			id = strings.TrimSuffix(ent.Name(), ".pb.json")
 		}
 		out = append(out, anytypedomain.ObjectInfo{
-			ID:      id,
-			Name:    asString(f.Snapshot.Data.Details["name"]),
-			SbType:  f.SbType,
-			Details: f.Snapshot.Data.Details,
-			Blocks:  f.Snapshot.Data.Blocks,
+			ID:          id,
+			Name:        asString(f.Snapshot.Data.Details["name"]),
+			SbType:      f.SbType,
+			Details:     f.Snapshot.Data.Details,
+			Blocks:      f.Snapshot.Data.Blocks,
+			ObjectTypes: anyToStringSlice(f.Snapshot.Data.ObjectTypes),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

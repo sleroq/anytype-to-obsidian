@@ -4,8 +4,9 @@ type SnapshotFile struct {
 	SbType   string `json:"sbType"`
 	Snapshot struct {
 		Data struct {
-			Blocks  []Block        `json:"blocks"`
-			Details map[string]any `json:"details"`
+			Blocks      []Block        `json:"blocks"`
+			Details     map[string]any `json:"details"`
+			ObjectTypes []any          `json:"objectTypes"`
 		} `json:"data"`
 	} `json:"snapshot"`
 }
@@ -107,11 +108,12 @@ type RelationOption struct {
 }
 
 type ObjectInfo struct {
-	ID      string
-	Name    string
-	SbType  string
-	Details map[string]any
-	Blocks  []Block
+	ID          string
+	Name        string
+	SbType      string
+	Details     map[string]any
+	Blocks      []Block
+	ObjectTypes []string
 }
 
 type TemplateInfo struct {

@@ -3,6 +3,7 @@ package exporter
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -351,6 +352,17 @@ func buildLinkTargetIndex(notePathByID map[string]string, basePathByID map[strin
 	return linkPathByID
 }
 
+func filterOutBaseBackedNotes(notePathByID map[string]string, basePathByID map[string]string) map[string]string {
+	filtered := make(map[string]string, len(notePathByID))
+	for id, path := range notePathByID {
+		if _, hasBase := basePathByID[id]; hasBase {
+			continue
+		}
+		filtered[id] = path
+	}
+	return filtered
+}
+
 func buildObjectNameIndexes(allObjects []objectInfo, typesByID map[string]typeDef, optionsByID map[string]relationOption) (map[string]objectInfo, map[string]string, map[string]string) {
 	idToObject := make(map[string]objectInfo, len(allObjects))
 	objectNamesByID := make(map[string]string, len(allObjects)+len(typesByID)+len(optionsByID))
@@ -384,6 +396,25 @@ func buildObjectNameIndexes(allObjects []objectInfo, typesByID map[string]typeDe
 		objectNamesByID[id] = name
 	}
 	return idToObject, objectNamesByID, optionNamesByID
+}
+
+func shouldExportBaseObject(obj objectInfo, includeArchived bool) bool {
+	if includeArchived {
+		return true
+	}
+	if asBool(anyMapGet(obj.Details, "isArchived", "is_archived", "archived")) {
+		return false
+	}
+	objectTypes := obj.ObjectTypes
+	if len(objectTypes) == 0 {
+		objectTypes = anyToStringSlice(obj.Details["objectTypes"])
+	}
+	for _, objectType := range objectTypes {
+		if strings.TrimSpace(objectType) == "ot-relationOption" {
+			return false
+		}
+	}
+	return true
 }
 
 func (e Exporter) Run() (Stats, error) {
@@ -449,6 +480,10 @@ func (e Exporter) Run() (Stats, error) {
 	basePathByID := map[string]string{}
 	usedBaseNames := map[string]int{}
 	for _, obj := range objects {
+		if !shouldExportBaseObject(obj, e.IncludeArchivedProperties) {
+			progressBar.Advance("exporting bases")
+			continue
+		}
 		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects, !e.DisablePictureToCover)
 		if !ok {
 			progressBar.Advance("exporting bases")
@@ -476,7 +511,8 @@ func (e Exporter) Run() (Stats, error) {
 		progressBar.Advance("exporting bases")
 	}
 
-	linkPathByID := buildLinkTargetIndex(notePathByID, basePathByID)
+	exportedNotePathByID := filterOutBaseBackedNotes(notePathByID, basePathByID)
+	linkPathByID := buildLinkTargetIndex(exportedNotePathByID, basePathByID)
 
 	for _, tmpl := range templates {
 		templateRelPath := templatePathByID[tmpl.ID]
@@ -495,7 +531,11 @@ func (e Exporter) Run() (Stats, error) {
 	}
 
 	for _, obj := range allObjects {
-		noteRelPath := notePathByID[obj.ID]
+		noteRelPath, ok := exportedNotePathByID[obj.ID]
+		if !ok || strings.TrimSpace(noteRelPath) == "" {
+			progressBar.Advance("exporting notes")
+			continue
+		}
 		noteAbsPath := filepath.Join(e.OutputDir, filepath.FromSlash(noteRelPath))
 		if err := os.MkdirAll(filepath.Dir(noteAbsPath), 0o755); err != nil {
 			return Stats{}, err
@@ -543,7 +583,7 @@ func (e Exporter) Run() (Stats, error) {
 	}
 
 	if !e.DisableIconizeIcons {
-		if err := exportIconizePluginData(e.InputDir, e.OutputDir, allObjects, notePathByID, fileObjects); err != nil {
+		if err := exportIconizePluginData(e.InputDir, e.OutputDir, allObjects, exportedNotePathByID, fileObjects); err != nil {
 			return Stats{}, fmt.Errorf("export iconize plugin data: %w", err)
 		}
 	}
@@ -552,7 +592,7 @@ func (e Exporter) Run() (Stats, error) {
 		return Stats{}, fmt.Errorf("export pretty properties plugin data: %w", err)
 	}
 
-	idx := indexFile{Notes: notePathByID}
+	idx := indexFile{Notes: linkPathByID}
 	indexBytes, _ := json.MarshalIndent(idx, "", "  ")
 	if err := os.MkdirAll(dirs.anytypeDir, 0o755); err != nil {
 		return Stats{}, err
@@ -571,9 +611,68 @@ func (e Exporter) Run() (Stats, error) {
 
 	progressBar.Finish("done")
 
-	return Stats{Notes: len(allObjects), Files: copiedFiles}, nil
+	return Stats{Notes: len(exportedNotePathByID), Files: copiedFiles}, nil
 }
 
 func tryRunPrettier(outputDir string) error {
-	return prettierCommandRunner(outputDir)
+	if err := prettierCommandRunner(outputDir); err != nil {
+		return err
+	}
+	return restoreCalloutBlockSeparation(outputDir)
+}
+
+func restoreCalloutBlockSeparation(outputDir string) error {
+	for _, dir := range []string{"notes", "templates"} {
+		root := filepath.Join(outputDir, dir)
+		if _, err := os.Stat(root); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() || filepath.Ext(path) != ".md" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			fixed, changed := ensureCalloutBlockSeparation(string(data))
+			if !changed {
+				return nil
+			}
+			return os.WriteFile(path, []byte(fixed), 0o644)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureCalloutBlockSeparation(markdown string) (string, bool) {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0, len(lines)+8)
+	changed := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "> [!") && len(out) > 0 {
+			prev := out[len(out)-1]
+			if strings.HasPrefix(prev, "> ") {
+				out = append(out, "")
+				changed = true
+			}
+		}
+		out = append(out, line)
+	}
+
+	if !changed {
+		return markdown, false
+	}
+	return strings.Join(out, "\n"), true
 }
