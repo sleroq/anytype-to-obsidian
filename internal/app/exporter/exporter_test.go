@@ -940,6 +940,71 @@ func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
 	}
 }
 
+func TestExporterLinksQueriesToBaseFiles(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "query.pb.json"), "Page", map[string]any{
+		"id":   "query-1",
+		"name": "General Journal",
+	}, []map[string]any{
+		{"id": "query-1", "childrenIds": []string{"title", "dataview"}},
+		{"id": "title", "text": map[string]any{"text": "General Journal", "style": "Title"}},
+		{"id": "dataview", "dataview": map[string]any{
+			"views": []any{map[string]any{"id": "view-1", "type": "List", "name": "All"}},
+		}},
+	})
+
+	writePBJSON(t, filepath.Join(input, "objects", "source.pb.json"), "Page", map[string]any{
+		"id":   "source-1",
+		"name": "Source",
+	}, []map[string]any{
+		{"id": "source-1", "childrenIds": []string{"title", "p1", "l1"}},
+		{"id": "title", "text": map[string]any{"text": "Source", "style": "Title"}},
+		{"id": "p1", "text": map[string]any{
+			"text":  "Mention query",
+			"style": "Paragraph",
+			"marks": map[string]any{"marks": []any{map[string]any{"range": map[string]any{"from": 0, "to": 13}, "type": "Mention", "param": "query-1"}}},
+		}},
+		{"id": "l1", "link": map[string]any{"targetBlockId": "query-1"}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	basePath := filepath.Join(output, "bases", "General Journal.base")
+	if _, err := os.Stat(basePath); err != nil {
+		t.Fatalf("expected base file to be exported: %v", err)
+	}
+
+	sourceNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "Source.md"))
+	if err != nil {
+		t.Fatalf("read source note: %v", err)
+	}
+	sourceNote := string(sourceNoteBytes)
+	if !strings.Contains(sourceNote, "[[bases/General Journal.base]]") {
+		t.Fatalf("expected query mention/link to target base file, got:\n%s", sourceNote)
+	}
+
+	queryNoteBytes, err := os.ReadFile(filepath.Join(output, "notes", "General Journal.md"))
+	if err != nil {
+		t.Fatalf("read query note: %v", err)
+	}
+	queryNote := string(queryNoteBytes)
+	if !strings.Contains(queryNote, "![[bases/General Journal.base]]") {
+		t.Fatalf("expected dataview block to embed base file, got:\n%s", queryNote)
+	}
+}
+
 func TestExporterSkipsSystemTitleInsideHeaderLayout(t *testing.T) {
 	root := t.TempDir()
 	input := filepath.Join(root, "Anytype-json")

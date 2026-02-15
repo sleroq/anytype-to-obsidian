@@ -354,6 +354,20 @@ func buildTemplatePathIndex(templates []templateInfo, typesByID map[string]typeD
 	return templatePathByID
 }
 
+func buildLinkTargetIndex(notePathByID map[string]string, basePathByID map[string]string) map[string]string {
+	linkPathByID := make(map[string]string, len(notePathByID)+len(basePathByID))
+	for id, path := range notePathByID {
+		linkPathByID[id] = path
+	}
+	for id, path := range basePathByID {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		linkPathByID[id] = path
+	}
+	return linkPathByID
+}
+
 func buildObjectNameIndexes(allObjects []objectInfo, typesByID map[string]typeDef, optionsByID map[string]relationOption) (map[string]objectInfo, map[string]string, map[string]string) {
 	idToObject := make(map[string]objectInfo, len(allObjects))
 	objectNamesByID := make(map[string]string, len(allObjects)+len(typesByID)+len(optionsByID))
@@ -449,6 +463,7 @@ func (e Exporter) Run() (Stats, error) {
 
 	usedExcalidrawNames := map[string]int{}
 
+	basePathByID := map[string]string{}
 	usedBaseNames := map[string]int{}
 	for _, obj := range objects {
 		baseContent, ok := renderBaseFile(obj, relations, optionNamesByID, notePathByID, objectNamesByID, fileObjects, !e.DisablePictureToCover)
@@ -467,6 +482,7 @@ func (e Exporter) Run() (Stats, error) {
 		if n > 0 {
 			baseName = baseName + "-" + strconv.Itoa(n+1)
 		}
+		basePathByID[obj.ID] = filepath.ToSlash(filepath.Join("bases", baseName+".base"))
 		basePath := filepath.Join(dirs.baseDir, baseName+".base")
 		if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write base %s: %w", obj.ID, err)
@@ -477,13 +493,15 @@ func (e Exporter) Run() (Stats, error) {
 		progressBar.Advance("exporting bases")
 	}
 
+	linkPathByID := buildLinkTargetIndex(notePathByID, basePathByID)
+
 	for _, tmpl := range templates {
 		templateRelPath := templatePathByID[tmpl.ID]
 		templateAbsPath := filepath.Join(e.OutputDir, filepath.FromSlash(templateRelPath))
 		if err := os.MkdirAll(filepath.Dir(templateAbsPath), 0o755); err != nil {
 			return Stats{}, err
 		}
-		content := renderTemplate(tmpl, relations, idToObject, notePathByID, fileObjects, !e.DisablePictureToCover)
+		content := renderTemplate(tmpl, relations, idToObject, linkPathByID, fileObjects, !e.DisablePictureToCover)
 		if err := os.WriteFile(templateAbsPath, []byte(content), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write template %s: %w", tmpl.ID, err)
 		}
@@ -510,7 +528,7 @@ func (e Exporter) Run() (Stats, error) {
 			relations,
 			typesByID,
 			optionNamesByID,
-			notePathByID,
+			linkPathByID,
 			noteRelPath,
 			objectNamesByID,
 			fileObjects,
@@ -520,7 +538,7 @@ func (e Exporter) Run() (Stats, error) {
 			!e.DisablePrettyPropertyIcon,
 			!e.DisablePictureToCover,
 		)
-		body := renderBody(obj, idToObject, notePathByID, noteRelPath, fileObjects, excalidrawEmbeds)
+		body := renderBody(obj, idToObject, linkPathByID, noteRelPath, fileObjects, excalidrawEmbeds)
 		if err := os.WriteFile(noteAbsPath, []byte(fm+body), 0o644); err != nil {
 			return Stats{}, fmt.Errorf("write note %s: %w", obj.ID, err)
 		}
@@ -1987,6 +2005,10 @@ func renderBlock(buf *bytes.Buffer, byID map[string]block, id string, notes map[
 		} else if strings.TrimSpace(b.Latex.Text) != "" {
 			buf.WriteString("$$\n" + b.Latex.Text + "\n$$\n")
 		}
+	} else if len(b.Dataview) > 0 {
+		if note, ok := notes[rootID]; ok && strings.HasPrefix(filepath.ToSlash(strings.TrimSpace(note)), "bases/") {
+			buf.WriteString("![[" + relativeWikiTarget(sourceNotePath, note) + "]]\n")
+		}
 	} else if b.Link != nil {
 		if note, ok := notes[b.Link.TargetBlockID]; ok {
 			buf.WriteString("[[" + relativeWikiTarget(sourceNotePath, note) + "]]\n")
@@ -2402,6 +2424,10 @@ func linkTargetDate(target string) string {
 }
 
 func relativeWikiTarget(sourceNotePath string, targetNotePath string) string {
+	targetNotePath = filepath.ToSlash(strings.TrimSpace(targetNotePath))
+	if strings.HasPrefix(targetNotePath, "bases/") {
+		return targetNotePath
+	}
 	return relativePathTarget(sourceNotePath, targetNotePath)
 }
 
