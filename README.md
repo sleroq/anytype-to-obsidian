@@ -19,6 +19,12 @@ Convert Anytype JSON Export into Obsidian Markdown with relations and metadata p
 2. Get binary for your platform from [releases](https://github.com/sleroq/anytype-to-obsidian/releases) (skip if you can run using Nix)
 3. Run it specifying location of exported space: `anytype-to-obsidian.exe -input ./Anytype-exported-json -output ./result-directory`
 
+## Obsidian plugins requirements
+
+- [Pretty Properties](https://obsidian.md/plugins?id=pretty-properties)
+- [Iconize](https://obsidian.md/plugins?id=obsidian-icon-folder)
+- [Kanban](https://github.com/sleroq/bases-kanban) (or disable kanban via `-disable-bases-kanban`)
+
 ## Usage
 
 Run in interactive mode (no arguments):
@@ -58,6 +64,7 @@ nix run github:sleroq/anytype-to-obsidian -- -input ./Anytype-exported-json -out
 - `-force-include-properties`: comma-separated property keys/names to include even if hidden by default.
 - `-link-as-note-properties`: comma-separated relation keys/names to export as note links (for example `type,tag,status`).
 - `-disable-picture-to-cover`: keep the original `picture` property name instead of exporting it as `cover`.
+- `-disable-bases-kanban`: disable bases-kanban integration and export Anytype board/kanban views as regular table views.
 - `-disable-pretty-properties-icon`: keep original `iconImage` / `iconEmoji` properties instead of exporting Pretty Properties-compatible `icon`.
 - `-disable-iconize-icons`: disable Iconize plugin data/icon export.
 
@@ -65,15 +72,6 @@ Property precedence:
 
 - `force-include` -> `exclude` -> default hidden/dynamic/archived rules
 - then `-exclude-empty-properties` removes remaining empty values
-
-## Output
-
-- `notes/*.md` - exported notes.
-- `templates/*.md` - exported templates.
-- `bases/*.base` - exported Obsidian Bases from Anytype queries.
-- `files/*` - copied files/assets.
-- `_anytype/index.json` - mapping/index metadata.
-- `_anytype/raw/*.json` - raw Anytype payload sidecars.
 
 ## Issues
 

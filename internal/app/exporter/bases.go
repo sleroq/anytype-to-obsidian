@@ -44,7 +44,7 @@ type baseFilterNode struct {
 
 var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) (string, bool) {
+func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) (string, bool) {
 	var views []baseViewSpec
 	for _, b := range obj.Blocks {
 		if len(b.Dataview) == 0 {
@@ -54,7 +54,7 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 		if targetID != "" && targetID != obj.ID {
 			continue
 		}
-		parsed := parseDataviewViews(b.Dataview, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover)
+		parsed := parseDataviewViews(b.Dataview, relations, optionNamesByID, notes, objectNamesByID, fileObjects, pictureToCover, enableBasesKanban)
 		views = append(views, parsed...)
 	}
 	if len(views) == 0 {
@@ -164,7 +164,7 @@ func andBaseFilters(left *baseFilterNode, right *baseFilterNode) *baseFilterNode
 	return &baseFilterNode{Op: "and", Items: []baseFilterNode{*left, *right}}
 }
 
-func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) []baseViewSpec {
+func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) []baseViewSpec {
 	viewsRaw := asAnySlice(raw["views"])
 	out := make([]baseViewSpec, 0, len(viewsRaw))
 	for _, viewRaw := range viewsRaw {
@@ -176,8 +176,12 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 		if viewType == "" {
 			viewType = "table"
 		}
-		if viewType == "kanban" {
-			viewType = "table"
+		if viewType == "kanban" || viewType == "board" {
+			if enableBasesKanban {
+				viewType = "kanban"
+			} else {
+				viewType = "table"
+			}
 		}
 		if viewType == "gallery" {
 			viewType = "cards"
