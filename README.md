@@ -2,15 +2,16 @@
 
 Convert Anytype JSON Export into Obsidian Markdown with relations and metadata preserved.
 
+<img img width="140" height="140" src="https://share.cum.army/u/BbTWTh.png" alt="Graph view screenshot" width="340" />
+
 ## Features
 
-- Relations are exported correctly (object links, tags, statuses, files, types, multi-selects).
-- All of Anytype blocks are supported.
-- Anytype queries/collections are converted into Obsidian Bases (`.base`) files.
-- Collection Bases are scoped by `createdInContext` membership when available.
-- Integration with Pretty Properties and Iconize obsidian plugins. Compatible properties are converted and renamed.
-- Select-like values (for example `tag`, `status`, `type`) can be exported as linked objects/notes when needed.
-- Property visibility is configurable: include dynamic, archived, hidden, empty, or specific properties.
+- Relations are exported correctly.
+- All blocks are supported.
+- Queries/collections are converted into Obsidian Bases.
+- Integration with Pretty Properties and Iconize obsidian plugins.
+- Select-like values (tags) can be exported as objects.
+- Pretty much everything is configurable.
 
 ## Quick start
 
