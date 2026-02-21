@@ -12,14 +12,15 @@ import (
 )
 
 type baseViewSpec struct {
-	Type    string
-	Name    string
-	Limit   int
-	GroupBy *baseGroupSpec
-	Filters *baseFilterNode
-	Order   []string
-	Select  []string
-	Sort    []baseSortSpec
+	Type           string
+	Name           string
+	Limit          int
+	GroupBy        *baseGroupSpec
+	Filters        *baseFilterNode
+	Order          []string
+	Select         []string
+	Sort           []baseSortSpec
+	LocalCardOrder string
 }
 
 type baseGroupSpec struct {
@@ -135,6 +136,11 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 				}
 			}
 		}
+		if strings.TrimSpace(v.LocalCardOrder) != "" {
+			buf.WriteString("    localCardOrder: ")
+			writeYAMLString(&buf, v.LocalCardOrder)
+			buf.WriteString("\n")
+		}
 	}
 
 	return buf.String(), true
@@ -189,6 +195,10 @@ func buildSetOfTypeFilter(obj objectInfo, relations map[string]relationDef, opti
 }
 
 func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) []baseViewSpec {
+	var localCardOrderByView map[string]string
+	if enableBasesKanban {
+		localCardOrderByView = parseDataviewLocalCardOrder(raw, relations, optionNamesByID, notes, objectNamesByID, fileObjects)
+	}
 	viewsRaw := asAnySlice(raw["views"])
 	out := make([]baseViewSpec, 0, len(viewsRaw))
 	for _, viewRaw := range viewsRaw {
@@ -218,8 +228,12 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 		if name == "" {
 			name = "View"
 		}
+		viewID := strings.TrimSpace(asString(anyMapGet(viewMap, "id", "Id")))
 
 		view := baseViewSpec{Type: viewType, Name: name}
+		if localCardOrder, ok := localCardOrderByView[viewID]; ok {
+			view.LocalCardOrder = localCardOrder
+		}
 		view.Limit = asInt(anyMapGet(viewMap, "pageLimit", "PageLimit"))
 
 		relationsRaw := asAnySlice(anyMapGet(viewMap, "relations", "Relations"))
@@ -309,6 +323,140 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 		out = append(out, view)
 	}
 	return out
+}
+
+func parseDataviewLocalCardOrder(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) map[string]string {
+	viewsRaw := asAnySlice(anyMapGet(raw, "views", "Views"))
+	if len(viewsRaw) == 0 {
+		return nil
+	}
+
+	type groupOrder struct {
+		name  string
+		cards []string
+	}
+
+	groupRelationByViewID := make(map[string]string, len(viewsRaw))
+	for _, viewRaw := range viewsRaw {
+		viewMap, ok := viewRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		viewID := strings.TrimSpace(asString(anyMapGet(viewMap, "id", "Id")))
+		if viewID == "" {
+			continue
+		}
+		groupRelationKey := strings.TrimSpace(asString(anyMapGet(viewMap, "groupRelationKey", "GroupRelationKey")))
+		if groupRelationKey == "" {
+			continue
+		}
+		groupRelationByViewID[viewID] = groupRelationKey
+	}
+	if len(groupRelationByViewID) == 0 {
+		return nil
+	}
+
+	objectOrdersRaw := asAnySlice(anyMapGet(raw, "objectOrders", "ObjectOrders"))
+	if len(objectOrdersRaw) == 0 {
+		return nil
+	}
+
+	groupOrdersByView := make(map[string][]groupOrder)
+	groupIndexByView := make(map[string]map[string]int)
+
+	for _, objectOrderRaw := range objectOrdersRaw {
+		objectOrderMap, ok := objectOrderRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		viewID := strings.TrimSpace(asString(anyMapGet(objectOrderMap, "viewId", "ViewId")))
+		if viewID == "" {
+			continue
+		}
+		groupRelationKey, hasGroupRelation := groupRelationByViewID[viewID]
+		if !hasGroupRelation || strings.TrimSpace(groupRelationKey) == "" {
+			continue
+		}
+
+		groupID := strings.TrimSpace(asString(anyMapGet(objectOrderMap, "groupId", "GroupId")))
+		if groupID == "" || groupID == "empty" {
+			continue
+		}
+
+		groupName := strings.TrimSpace(resolveDataviewGroupName(groupRelationKey, groupID, relations, optionNamesByID, notes, objectNamesByID, fileObjects))
+		if groupName == "" {
+			continue
+		}
+
+		objectIDs := anyToStringSlice(anyMapGet(objectOrderMap, "objectIds", "ObjectIds"))
+		cards := make([]string, 0, len(objectIDs))
+		for _, objectID := range objectIDs {
+			notePath := strings.TrimSpace(notes[objectID])
+			if notePath == "" {
+				continue
+			}
+			cards = append(cards, notePath)
+		}
+		if len(cards) == 0 {
+			continue
+		}
+
+		if _, ok := groupIndexByView[viewID]; !ok {
+			groupIndexByView[viewID] = map[string]int{}
+		}
+		if idx, exists := groupIndexByView[viewID][groupName]; exists {
+			groupOrdersByView[viewID][idx].cards = cards
+			continue
+		}
+		groupIndexByView[viewID][groupName] = len(groupOrdersByView[viewID])
+		groupOrdersByView[viewID] = append(groupOrdersByView[viewID], groupOrder{name: groupName, cards: cards})
+	}
+
+	if len(groupOrdersByView) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(groupOrdersByView))
+	for viewID, groups := range groupOrdersByView {
+		if len(groups) == 0 {
+			continue
+		}
+		var jsonBuf bytes.Buffer
+		jsonBuf.WriteByte('{')
+		for i, group := range groups {
+			if i > 0 {
+				jsonBuf.WriteByte(',')
+			}
+			nameJSON, _ := json.Marshal(group.name)
+			cardsJSON, _ := json.Marshal(group.cards)
+			jsonBuf.Write(nameJSON)
+			jsonBuf.WriteByte(':')
+			jsonBuf.Write(cardsJSON)
+		}
+		jsonBuf.WriteByte('}')
+		out[viewID] = jsonBuf.String()
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func resolveDataviewGroupName(relationKey string, groupID string, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string) string {
+	mapped := convertPropertyValue(relationKey, groupID, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
+	name := strings.TrimSpace(mappedToString(mapped))
+	if name != "" {
+		return name
+	}
+	if optionName := strings.TrimSpace(optionNamesByID[groupID]); optionName != "" {
+		return optionName
+	}
+	if objectName := strings.TrimSpace(objectNamesByID[groupID]); objectName != "" {
+		return objectName
+	}
+	return strings.TrimSpace(groupID)
 }
 
 func writeBaseFilterNode(buf *bytes.Buffer, node baseFilterNode, indent int) {

@@ -2480,6 +2480,43 @@ func TestParseDataviewViewsMapsKanbanToTableWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestParseDataviewViewsPreservesLocalCardOrder(t *testing.T) {
+	views := parseDataviewViews(map[string]any{
+		"views": []any{
+			map[string]any{
+				"id":               "view-1",
+				"type":             "Kanban",
+				"name":             "Board",
+				"groupRelationKey": "status",
+			},
+		},
+		"objectOrders": []any{
+			map[string]any{"viewId": "view-1", "groupId": "opt-status-shelf", "objectIds": []any{"obj-1", "obj-2"}},
+			map[string]any{"viewId": "view-1", "groupId": "empty", "objectIds": []any{"obj-3"}},
+			map[string]any{"viewId": "view-1", "groupId": "opt-status-finished", "objectIds": []any{"obj-4", "obj-missing"}},
+		},
+	}, map[string]relationDef{
+		"status": {Format: anytypedomain.RelationFormatStatus},
+	}, map[string]string{
+		"opt-status-shelf":    "Shelf",
+		"opt-status-finished": "Finished",
+	}, map[string]string{
+		"obj-1": "notes/Create Mod.md",
+		"obj-2": "notes/Weed Shop 3.md",
+		"obj-3": "notes/Should Be Skipped.md",
+		"obj-4": "notes/Miside.md",
+	}, nil, nil, false, true)
+
+	if len(views) != 1 {
+		t.Fatalf("expected one view, got %d", len(views))
+	}
+
+	want := `{"Shelf":["notes/Create Mod.md","notes/Weed Shop 3.md"],"Finished":["notes/Miside.md"]}`
+	if views[0].LocalCardOrder != want {
+		t.Fatalf("expected localCardOrder %q, got %q", want, views[0].LocalCardOrder)
+	}
+}
+
 func TestRenderBaseFileAddsSetOfTypeFilter(t *testing.T) {
 	obj := objectInfo{
 		ID: "query-1",
@@ -2506,6 +2543,90 @@ func TestRenderBaseFileAddsSetOfTypeFilter(t *testing.T) {
 	}
 	if !strings.Contains(base, "type == \\\"Games\\\"") || !strings.Contains(base, "list(type).contains(\\\"Games\\\")") {
 		t.Fatalf("expected setOf type filter to be added to base views, got:\n%s", base)
+	}
+}
+
+func TestRenderBaseFileRendersLocalCardOrder(t *testing.T) {
+	obj := objectInfo{
+		ID: "query-1",
+		Blocks: []block{
+			{
+				ID: "dataview",
+				Dataview: map[string]any{
+					"views": []any{
+						map[string]any{
+							"id":               "view-1",
+							"type":             "Kanban",
+							"name":             "Board",
+							"groupRelationKey": "status",
+						},
+					},
+					"objectOrders": []any{
+						map[string]any{"viewId": "view-1", "groupId": "opt-status-shelf", "objectIds": []any{"obj-1", "obj-2"}},
+					},
+				},
+			},
+		},
+	}
+
+	base, ok := renderBaseFile(
+		obj,
+		map[string]relationDef{"status": {Format: anytypedomain.RelationFormatStatus}},
+		map[string]string{"opt-status-shelf": "Shelf"},
+		map[string]string{"obj-1": "notes/Create Mod.md", "obj-2": "notes/Weed Shop 3.md"},
+		nil,
+		nil,
+		false,
+		true,
+	)
+	if !ok {
+		t.Fatalf("expected base to be rendered")
+	}
+
+	if !strings.Contains(base, `localCardOrder: "{\"Shelf\":[\"notes/Create Mod.md\",\"notes/Weed Shop 3.md\"]}"`) {
+		t.Fatalf("expected localCardOrder to be rendered, got:\n%s", base)
+	}
+}
+
+func TestRenderBaseFileOmitsLocalCardOrderWhenKanbanDisabled(t *testing.T) {
+	obj := objectInfo{
+		ID: "query-1",
+		Blocks: []block{
+			{
+				ID: "dataview",
+				Dataview: map[string]any{
+					"views": []any{
+						map[string]any{
+							"id":               "view-1",
+							"type":             "Kanban",
+							"name":             "Board",
+							"groupRelationKey": "status",
+						},
+					},
+					"objectOrders": []any{
+						map[string]any{"viewId": "view-1", "groupId": "opt-status-shelf", "objectIds": []any{"obj-1", "obj-2"}},
+					},
+				},
+			},
+		},
+	}
+
+	base, ok := renderBaseFile(
+		obj,
+		map[string]relationDef{"status": {Format: anytypedomain.RelationFormatStatus}},
+		map[string]string{"opt-status-shelf": "Shelf"},
+		map[string]string{"obj-1": "notes/Create Mod.md", "obj-2": "notes/Weed Shop 3.md"},
+		nil,
+		nil,
+		false,
+		false,
+	)
+	if !ok {
+		t.Fatalf("expected base to be rendered")
+	}
+
+	if strings.Contains(base, "localCardOrder") {
+		t.Fatalf("expected localCardOrder to be omitted when kanban is disabled, got:\n%s", base)
 	}
 }
 
