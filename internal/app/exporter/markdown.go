@@ -32,17 +32,8 @@ func renderBody(obj objectInfo, objects map[string]objectInfo, notes map[string]
 		return ""
 	}
 
-	children := make([]string, 0, len(root.ChildrenID))
-	for _, childID := range root.ChildrenID {
-		child, exists := byID[childID]
-		if exists && child.Text != nil && child.Text.Style == "Title" {
-			continue
-		}
-		children = append(children, childID)
-	}
-
 	var buf bytes.Buffer
-	renderChildren(&buf, byID, children, notes, sourceNotePath, fileObjects, excalidrawEmbeds, 0, obj.ID)
+	renderChildren(&buf, byID, root.ChildrenID, notes, sourceNotePath, fileObjects, excalidrawEmbeds, 0, obj.ID)
 	return strings.TrimLeft(buf.String(), "\n")
 }
 
@@ -269,26 +260,19 @@ func renderTextBlock(t textBlock, depth int, fields map[string]any, notes map[st
 }
 
 func applyTextMarks(text string, marks *anytypedomain.TextMarks, notes map[string]string, sourceNotePath string) string {
-	if strings.TrimSpace(text) == "" || marks == nil || len(marks.Marks) == 0 || len(notes) == 0 {
+	if strings.TrimSpace(text) == "" || marks == nil || len(marks.Marks) == 0 {
 		return text
 	}
 
-	type mentionMark struct {
+	type replacementMark struct {
 		from int
 		to   int
-		note string
+		repl string
 	}
 
 	runes := []rune(text)
-	mentions := make([]mentionMark, 0, len(marks.Marks))
+	replacements := make([]replacementMark, 0, len(marks.Marks))
 	for _, mark := range marks.Marks {
-		if !strings.EqualFold(strings.TrimSpace(mark.Type), "mention") {
-			continue
-		}
-		note := notes[strings.TrimSpace(mark.Param)]
-		if note == "" {
-			continue
-		}
 		from := mark.Range.From
 		to := mark.Range.To
 		if from < 0 {
@@ -300,30 +284,47 @@ func applyTextMarks(text string, marks *anytypedomain.TextMarks, notes map[strin
 		if to <= from {
 			continue
 		}
-		mentions = append(mentions, mentionMark{from: from, to: to, note: note})
+
+		markType := strings.ToLower(strings.TrimSpace(mark.Type))
+		switch markType {
+		case "mention":
+			note := notes[strings.TrimSpace(mark.Param)]
+			if note == "" {
+				continue
+			}
+			replacements = append(replacements, replacementMark{from: from, to: to, repl: "[[" + relativeWikiTarget(sourceNotePath, note) + "]]"})
+		case "link":
+			url := strings.TrimSpace(mark.Param)
+			if url == "" {
+				continue
+			}
+			label := strings.TrimSpace(string(runes[from:to]))
+			if label == "" {
+				label = url
+			}
+			replacements = append(replacements, replacementMark{from: from, to: to, repl: "[" + escapeBrackets(label) + "](" + url + ")"})
+		}
 	}
-	if len(mentions) == 0 {
+	if len(replacements) == 0 {
 		return text
 	}
 
-	sort.Slice(mentions, func(i, j int) bool {
-		if mentions[i].from == mentions[j].from {
-			return mentions[i].to < mentions[j].to
+	sort.Slice(replacements, func(i, j int) bool {
+		if replacements[i].from == replacements[j].from {
+			return replacements[i].to < replacements[j].to
 		}
-		return mentions[i].from < mentions[j].from
+		return replacements[i].from < replacements[j].from
 	})
 
 	var out strings.Builder
 	cursor := 0
-	for _, mention := range mentions {
-		if mention.from < cursor {
+	for _, replacement := range replacements {
+		if replacement.from < cursor {
 			continue
 		}
-		out.WriteString(string(runes[cursor:mention.from]))
-		out.WriteString("[[")
-		out.WriteString(relativeWikiTarget(sourceNotePath, mention.note))
-		out.WriteString("]]")
-		cursor = mention.to
+		out.WriteString(string(runes[cursor:replacement.from]))
+		out.WriteString(replacement.repl)
+		cursor = replacement.to
 	}
 	out.WriteString(string(runes[cursor:]))
 	return out.String()

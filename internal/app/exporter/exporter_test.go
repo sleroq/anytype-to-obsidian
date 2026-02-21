@@ -841,8 +841,8 @@ func TestExporterRendersObsidianCompatibleBlocks(t *testing.T) {
 		t.Fatalf("read note: %v", err)
 	}
 	note := string(noteBytes)
-	if strings.Contains(note, "# Blocks Page") {
-		t.Fatalf("expected root title block to be skipped in note body, got:\n%s", note)
+	if !strings.Contains(note, "# Blocks Page") {
+		t.Fatalf("expected root title block to be rendered in note body, got:\n%s", note)
 	}
 
 	if !strings.Contains(note, "- [Heading One](#heading-one)") || !strings.Contains(note, "- [Heading Two](#heading-two)") {
@@ -1050,6 +1050,53 @@ func TestExporterRendersMentionMarksAsNoteLinks(t *testing.T) {
 	note := string(noteBytes)
 	if !strings.Contains(note, "Hello [[Anastasiya Pervusheva.md]]!") {
 		t.Fatalf("expected mention mark to render note link, got:\n%s", note)
+	}
+}
+
+func TestExporterRendersExternalTextLinkMarks(t *testing.T) {
+	root := t.TempDir()
+	input := filepath.Join(root, "Anytype-json")
+	output := filepath.Join(root, "vault")
+
+	mustMkdirAll(t, filepath.Join(input, "objects"))
+	mustMkdirAll(t, filepath.Join(input, "relations"))
+	mustMkdirAll(t, filepath.Join(input, "relationsOptions"))
+	mustMkdirAll(t, filepath.Join(input, "filesObjects"))
+	mustMkdirAll(t, filepath.Join(input, "files"))
+
+	writePBJSON(t, filepath.Join(input, "objects", "obj-1.pb.json"), "Page", map[string]any{
+		"id":   "obj-1",
+		"name": "External Link Page",
+	}, []map[string]any{
+		{"id": "obj-1", "childrenIds": []string{"title", "p1"}},
+		{"id": "title", "text": map[string]any{"text": "External Link Page", "style": "Title"}},
+		{"id": "p1", "text": map[string]any{
+			"text":  "Read this article",
+			"style": "Paragraph",
+			"marks": map[string]any{
+				"marks": []any{
+					map[string]any{
+						"range": map[string]any{"from": 5, "to": 9},
+						"type":  "Link",
+						"param": "https://www.openmymind.net/",
+					},
+				},
+			},
+		}},
+	})
+
+	_, err := (Exporter{InputDir: input, OutputDir: output}).Run()
+	if err != nil {
+		t.Fatalf("run exporter: %v", err)
+	}
+
+	noteBytes, err := os.ReadFile(filepath.Join(output, "notes", "External Link Page.md"))
+	if err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	note := string(noteBytes)
+	if !strings.Contains(note, "Read [this](https://www.openmymind.net/) article") {
+		t.Fatalf("expected external link mark to render markdown link, got:\n%s", note)
 	}
 }
 
@@ -1967,8 +2014,11 @@ func TestExporterGeneratesTemplatesFromTemplateBlocks(t *testing.T) {
 		t.Fatalf("read template: %v", err)
 	}
 	template := string(templateBytes)
-	if strings.Contains(template, "\n# Contact\n") || strings.Contains(template, "\n# \n") {
-		t.Fatalf("expected root title block to be skipped in template body, got:\n%s", template)
+	if !strings.Contains(template, "\n# Contact\n") {
+		t.Fatalf("expected root title block to be rendered in template body, got:\n%s", template)
+	}
+	if strings.Contains(template, "\n# \n") {
+		t.Fatalf("expected template title to be non-empty, got:\n%s", template)
 	}
 	if strings.Contains(template, "anytype_template_id:") || strings.Contains(template, "anytype_target_type_id:") || strings.Contains(template, "anytype_target_type:") {
 		t.Fatalf("expected hidden anytype metadata to be omitted from template frontmatter, got:\n%s", template)
