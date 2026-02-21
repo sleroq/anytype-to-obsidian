@@ -77,6 +77,9 @@ func renderBaseFile(obj objectInfo, relations map[string]relationDef, optionName
 			views[i].Filters = andBaseFilters(views[i].Filters, setOfFilter)
 		}
 	}
+	for i := range views {
+		views[i].Filters = normalizeBaseFiltersRoot(views[i].Filters)
+	}
 
 	var buf bytes.Buffer
 	buf.WriteString("views:\n")
@@ -159,7 +162,27 @@ func andBaseFilters(left *baseFilterNode, right *baseFilterNode) *baseFilterNode
 	if right == nil {
 		return left
 	}
-	return &baseFilterNode{Op: "and", Items: []baseFilterNode{*left, *right}}
+	items := make([]baseFilterNode, 0, 4)
+	appendNode := func(node *baseFilterNode) {
+		if node == nil {
+			return
+		}
+		if strings.TrimSpace(node.Expr) == "" && strings.EqualFold(strings.TrimSpace(node.Op), "and") && len(node.Items) > 0 {
+			items = append(items, node.Items...)
+			return
+		}
+		items = append(items, *node)
+	}
+	appendNode(left)
+	appendNode(right)
+	return &baseFilterNode{Op: "and", Items: items}
+}
+
+func normalizeBaseFiltersRoot(node *baseFilterNode) *baseFilterNode {
+	if node == nil {
+		return nil
+	}
+	return &baseFilterNode{Op: "and", Items: []baseFilterNode{*node}}
 }
 
 func buildSetOfTypeFilter(obj objectInfo, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool) *baseFilterNode {
@@ -176,22 +199,9 @@ func buildSetOfTypeFilter(obj objectInfo, relations map[string]relationDef, opti
 	mapped := convertPropertyValue("type", setOfIDs, relations, optionNamesByID, notes, "", objectNamesByID, fileObjects, false, false)
 	values, ok := valueAsSlice(mapped)
 	if !ok || len(values) == 0 {
-		literal := renderFilterLiteral(mapped)
-		expr := "(" + prop + " == " + literal + " || " + buildContainsAnyExpression(prop, []string{literal}) + ")"
-		return &baseFilterNode{Expr: expr}
+		return &baseFilterNode{Expr: prop + ".contains(" + renderFilterLiteral(mapped) + ")"}
 	}
-
-	scalarParts := make([]string, 0, len(values))
-	for _, value := range values {
-		scalarParts = append(scalarParts, prop+" == "+value)
-	}
-	containsAny := buildContainsAnyExpression(prop, values)
-	if len(scalarParts) == 0 {
-		return &baseFilterNode{Expr: containsAny}
-	}
-
-	expr := "((" + strings.Join(scalarParts, " || ") + ") || " + containsAny + ")"
-	return &baseFilterNode{Expr: expr}
+	return &baseFilterNode{Expr: buildContainsAnyExpression(prop, values)}
 }
 
 func parseDataviewViews(raw map[string]any, relations map[string]relationDef, optionNamesByID map[string]string, notes map[string]string, objectNamesByID map[string]string, fileObjects map[string]string, pictureToCover bool, enableBasesKanban bool) []baseViewSpec {
@@ -569,7 +579,7 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 		return prop + " == " + renderFilterLiteral(mapped)
 	case "NotEqual":
 		if values, ok := valueAsSlice(mapped); ok {
-			return "!(" + buildContainsAnyExpression(prop, values) + ")"
+			return negateFilterExpression(buildContainsAnyExpression(prop, values))
 		}
 		return prop + " != " + renderFilterLiteral(mapped)
 	case "Greater":
@@ -597,9 +607,9 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 		return buildContainsAnyExpression(prop, []string{renderFilterLiteral(mapped)})
 	case "NotIn":
 		if values, ok := valueAsSlice(mapped); ok {
-			return "!(" + buildContainsAnyExpression(prop, values) + ")"
+			return negateFilterExpression(buildContainsAnyExpression(prop, values))
 		}
-		return "!(" + buildContainsAnyExpression(prop, []string{renderFilterLiteral(mapped)}) + ")"
+		return negateFilterExpression(buildContainsAnyExpression(prop, []string{renderFilterLiteral(mapped)}))
 	case "Empty":
 		return "(" + prop + " == null || " + prop + " == \"\")"
 	case "NotEmpty":
@@ -611,9 +621,9 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 		return buildContainsAllExpression(prop, []string{renderFilterLiteral(mapped)})
 	case "NotAllIn":
 		if values, ok := valueAsSlice(mapped); ok {
-			return "!(" + buildContainsAllExpression(prop, values) + ")"
+			return negateFilterExpression(buildContainsAllExpression(prop, values))
 		}
-		return "!(" + buildContainsAllExpression(prop, []string{renderFilterLiteral(mapped)}) + ")"
+		return negateFilterExpression(buildContainsAllExpression(prop, []string{renderFilterLiteral(mapped)}))
 	case "ExactIn":
 		if values, ok := valueAsSlice(mapped); ok {
 			return "(" + buildContainsAllExpression(prop, values) + " && list(" + prop + ").length == " + strconv.Itoa(len(values)) + ")"
@@ -621,9 +631,9 @@ func buildFilterExpression(raw map[string]any, relations map[string]relationDef,
 		return "(" + prop + " == " + renderFilterLiteral(mapped) + ")"
 	case "NotExactIn":
 		if values, ok := valueAsSlice(mapped); ok {
-			return "!(" + buildContainsAllExpression(prop, values) + " && list(" + prop + ").length == " + strconv.Itoa(len(values)) + ")"
+			return negateFilterExpression(buildContainsAllExpression(prop, values) + " && list(" + prop + ").length == " + strconv.Itoa(len(values)))
 		}
-		return "!(" + prop + " == " + renderFilterLiteral(mapped) + ")"
+		return negateFilterExpression(prop + " == " + renderFilterLiteral(mapped))
 	case "Exists":
 		return prop + " != null"
 	default:
@@ -769,7 +779,7 @@ func buildContainsAnyExpression(prop string, values []string) string {
 	}
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
-		parts = append(parts, "list("+prop+").contains("+value+")")
+		parts = append(parts, prop+".contains("+value+")")
 	}
 	if len(parts) == 1 {
 		return parts[0]
@@ -783,12 +793,26 @@ func buildContainsAllExpression(prop string, values []string) string {
 	}
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
-		parts = append(parts, "list("+prop+").contains("+value+")")
+		parts = append(parts, prop+".contains("+value+")")
 	}
 	if len(parts) == 1 {
 		return parts[0]
 	}
 	return "(" + strings.Join(parts, " && ") + ")"
+}
+
+func negateFilterExpression(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return ""
+	}
+	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
+		return "!" + expr
+	}
+	if strings.Contains(expr, " && ") || strings.Contains(expr, " || ") {
+		return "!(" + expr + ")"
+	}
+	return "!" + expr
 }
 
 func valueAsSlice(value any) ([]string, bool) {

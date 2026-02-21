@@ -2591,8 +2591,106 @@ func TestRenderBaseFileAddsSetOfTypeFilter(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected base to be rendered")
 	}
-	if !strings.Contains(base, "type == \\\"Games\\\"") || !strings.Contains(base, "list(type).contains(\\\"Games\\\")") {
-		t.Fatalf("expected setOf type filter to be added to base views, got:\n%s", base)
+	if !strings.Contains(base, "type.contains(\\\"Games\\\")") {
+		t.Fatalf("expected setOf type filter to use concise contains expression, got:\n%s", base)
+	}
+	if strings.Contains(base, "type == \\\"Games\\\"") || strings.Contains(base, "list(type).contains(") {
+		t.Fatalf("expected no scalar/list fallback setOf expression, got:\n%s", base)
+	}
+}
+
+func TestRenderBaseFileWrapsSingleSetOfFilterInTopLevelAnd(t *testing.T) {
+	obj := objectInfo{
+		ID: "query-1",
+		Details: map[string]any{
+			"setOf": []any{"type-work-note"},
+		},
+		Blocks: []block{
+			{
+				ID: "dataview",
+				Dataview: map[string]any{
+					"views": []any{
+						map[string]any{"id": "view-1", "type": "Table", "name": "All"},
+						map[string]any{"id": "view-2", "type": "Table", "name": "Grid"},
+					},
+				},
+			},
+		},
+	}
+
+	relations := map[string]relationDef{
+		"type": {Key: "type", Name: "Type", Format: anytypedomain.RelationFormatObjectRef},
+	}
+
+	base, ok := renderBaseFile(obj, relations, nil, nil, map[string]string{"type-work-note": "Work Note"}, nil, false, true)
+	if !ok {
+		t.Fatalf("expected base to be rendered")
+	}
+	if strings.Count(base, "type.contains(\\\"Work Note\\\")") != 2 {
+		t.Fatalf("expected concise type filter in each view, got:\n%s", base)
+	}
+	if strings.Count(base, "filters:\n      and:") != 2 {
+		t.Fatalf("expected top-level and wrapper for each view filters, got:\n%s", base)
+	}
+}
+
+func TestRenderBaseFileMergesViewFiltersAndSetOfTypeIntoConciseExpressions(t *testing.T) {
+	taskTypeKey := "65edf2aa8efc1e005b0cb9d2"
+	obj := objectInfo{
+		ID: "query-1",
+		Details: map[string]any{
+			"setOf": []any{"type-task"},
+		},
+		Blocks: []block{
+			{
+				ID: "dataview",
+				Dataview: map[string]any{
+					"views": []any{
+						map[string]any{
+							"id":   "view-1",
+							"type": "Kanban",
+							"name": "All",
+							"filters": []any{
+								map[string]any{"operator": "No", "RelationKey": taskTypeKey, "condition": "In", "value": []any{"opt-technical"}, "format": "status"},
+								map[string]any{"operator": "No", "RelationKey": "tag", "condition": "NotIn", "value": []any{"opt-testing"}, "format": "tag"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	relations := map[string]relationDef{
+		taskTypeKey: {Key: taskTypeKey, Name: "Task Type", Format: anytypedomain.RelationFormatStatus},
+		"tag":       {Key: "tag", Name: "tag", Format: anytypedomain.RelationFormatTag},
+		"type":      {Key: "type", Name: "Type", Format: anytypedomain.RelationFormatObjectRef},
+	}
+
+	base, ok := renderBaseFile(
+		obj,
+		relations,
+		map[string]string{"opt-technical": "Technical", "opt-testing": "testing"},
+		nil,
+		map[string]string{"type-task": "Task"},
+		nil,
+		false,
+		true,
+	)
+	if !ok {
+		t.Fatalf("expected base to be rendered")
+	}
+	if !strings.Contains(base, `note[\"Task Type\"].contains(\"Technical\")`) {
+		t.Fatalf("expected concise task type contains filter, got:\n%s", base)
+	}
+	if !strings.Contains(base, `type.contains(\"Task\")`) {
+		t.Fatalf("expected concise setOf type contains filter, got:\n%s", base)
+	}
+	if !strings.Contains(base, `!tags.contains(\"testing\")`) {
+		t.Fatalf("expected concise negated tag contains filter, got:\n%s", base)
+	}
+	if strings.Contains(base, `list(note["Task Type"]).contains`) || strings.Contains(base, "list(tags).contains") || strings.Contains(base, `type == "Task"`) {
+		t.Fatalf("expected simplified filter expressions only, got:\n%s", base)
 	}
 }
 
