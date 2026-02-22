@@ -222,7 +222,7 @@ func parseDataviewViews(raw map[string]any, relations map[string]relationDef, op
 		}
 		if viewType == "kanban" || viewType == "board" {
 			if enableBasesKanban {
-				viewType = "kanban"
+				viewType = "cumban"
 			} else {
 				viewType = "table"
 			}
